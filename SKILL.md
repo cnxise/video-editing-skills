@@ -66,7 +66,7 @@ python "<SKILL_DIR>\scripts\compose_video.py" --storyboard "<WORKSPACE_DIR>\stor
 
 ```bash
 pip install -r "<SKILL_DIR>\requirements.txt"           # Python 依赖
-python "<SKILL_DIR>\scripts\setup_resources.py"          # 下载 ffmpeg + BGM 资源
+python "<SKILL_DIR>\scripts\setup_resources.py"          # 下载 ffmpeg
 python "<SKILL_DIR>\scripts\setup_ov_model.py"           # 下载 VLM 模型（约 4-6 GB）
 ```
 

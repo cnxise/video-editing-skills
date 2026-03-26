@@ -1,0 +1,148 @@
+{
+  "舒缓优美": {
+    "003_cozy_piano_morning.mp3": {
+      "file_path": "003_cozy_piano_morning.mp3",
+      "analysis": {
+        "rhythm": "中低速，节拍柔和稳定。",
+        "emotion": "温馨、舒适、放松、治愈。",
+        "timbre": "温暖、清净、亲和。",
+        "instruments": "钢琴、低音贝斯、刷弦打击乐、轻弦乐。",
+        "scenarios": "早晨日常、居家 vlog、早餐/起床场景。",
+        "style": "warm piano lifestyle music",
+        "style_tag": "舒缓优美",
+        "summary": "温暖亲和的晨间钢琴配乐，以钢琴主旋律带动情绪，适合居家、早餐和早晨 routine。"
+      },
+      "source_file_path": "003_cozy_piano_morning.mp3"
+    }
+  },
+  "温馨浪漫": {
+    "012_warm_family_piano.mp3": {
+      "file_path": "012_warm_family_piano.mp3",
+      "analysis": {
+        "rhythm": "中速，轻柔流行节拍。",
+        "emotion": "温暖、真挚、振奋、感动。",
+        "timbre": "干净、温暖、情感丰富。",
+        "instruments": "钢琴、低音贝斯、轻鼓、轻弦乐。",
+        "scenarios": "家庭 vlog、亲子场景、庆典高光时刻。",
+        "style": "warm piano pop, family vlog underscore",
+        "style_tag": "温馨浪漫",
+        "summary": "更偏家庭与亲子内容的钢琴配乐，旋律温暖、易记，适合团聚和生活高光时刻。"
+      },
+      "source_file_path": "012_warm_family_piano.mp3"
+    },
+    "014_golden_hour_piano.mp3": {
+      "file_path": "014_golden_hour_piano.mp3",
+      "analysis": {
+        "rhythm": "中低速，流畅脉冲。",
+        "emotion": "浪漫、温柔、金色氛围、感性。",
+        "timbre": "金色、顺滑、光泽感。",
+        "instruments": "钢琴、低音贝斯、轻鼓、轻弦乐。",
+        "scenarios": "情侣 vlog、傍晚散步、黄昏/柔美时尚镜头。",
+        "style": "soft romantic piano pop",
+        "style_tag": "温馨浪漫",
+        "summary": "柔和浪漫的金色黄昏钢琴配乐，适合情侣、傍晚散步和温柔审美类镜头。"
+      },
+      "source_file_path": "014_golden_hour_piano.mp3"
+    }
+  },
+  "轻松愉悦": {
+    "002_sunny_piano_walk.mp3": {
+      "file_path": "002_sunny_piano_walk.mp3",
+      "analysis": {
+        "rhythm": "中速，轻快向前律动。",
+        "emotion": "清新、活泼、无忧无虑。",
+        "timbre": "干净、清脆、开阔。",
+        "instruments": "钢琴、轻贝斯、轻鼓、微弱吉他。",
+        "scenarios": "街头 vlog、逛街购物、边走边说类镜头。",
+        "style": "light piano pop, urban vlog music",
+        "style_tag": "轻松愉悦",
+        "summary": "阳光感更强的钢琴配乐，旋律轻快、结构简单，适合街拍、逛街和轻松出行内容。"
+      },
+      "source_file_path": "002_sunny_piano_walk.mp3"
+    },
+    "005_breezy_piano_drive.mp3": {
+      "file_path": "005_breezy_piano_drive.mp3",
+      "analysis": {
+        "rhythm": "中速，流畅滚动节奏。",
+        "emotion": "自由、乐观、放松、舒展。",
+        "timbre": "清澈、通透、开阔。",
+        "instruments": "钢琴、低音贝斯、轻鼓、微弱吉他。",
+        "scenarios": "公路旅行、开车蒙太奇、旅行日记。",
+        "style": "travel piano pop, road vlog music",
+        "style_tag": "轻松愉悦",
+        "summary": "有旅行流动感的钢琴主导配乐，旋律舒服顺耳，适合开车、公路和出行类 vlog。"
+      },
+      "source_file_path": "005_breezy_piano_drive.mp3"
+    },
+    "007_cafe_piano_sparkle.mp3": {
+      "file_path": "007_cafe_piano_sparkle.mp3",
+      "analysis": {
+        "rhythm": "中速，轻摇摆脉冲。",
+        "emotion": "清新、优雅、亲切。",
+        "timbre": "干净、清新明亮、有质感。",
+        "instruments": "钢琴、低音贝斯、刷弦鼓、微弱吉他。",
+        "scenarios": "咖啡馆 vlog、美食蒙太奇、都市生活镜头。",
+        "style": "cafe piano pop, lifestyle underscore",
+        "style_tag": "轻松愉悦",
+        "summary": "清新通透的咖啡馆感钢琴配乐，旋律悦耳，适合美食、咖啡和都市生活镜头。"
+      },
+      "source_file_path": "007_cafe_piano_sparkle.mp3"
+    },
+    "010_feel_good_piano_smile.mp3": {
+      "file_path": "010_feel_good_piano_smile.mp3",
+      "analysis": {
+        "rhythm": "中速，稳定上扬脉冲。",
+        "emotion": "积极、温暖、干净、治愈。",
+        "timbre": "清澈、精致、友好。",
+        "instruments": "钢琴、低音贝斯、轻鼓、微弱吉他。",
+        "scenarios": "自律生活、效率早晨、日常 recap 类 vlog。",
+        "style": "feel-good piano pop, lifestyle underscore",
+        "style_tag": "轻松愉悦",
+        "summary": "明朗治愈的钢琴旋律配乐，适合自律生活、效率内容和轻松积极的日常总结。"
+      },
+      "source_file_path": "010_feel_good_piano_smile.mp3"
+    },
+    "013_clean_lifestyle_piano.mp3": {
+      "file_path": "013_clean_lifestyle_piano.mp3",
+      "analysis": {
+        "rhythm": "中速，紧凑而轻盈。",
+        "emotion": "自信、清爽、乐观。",
+        "timbre": "清脆、现代、精致。",
+        "instruments": "钢琴、低音贝斯、轻鼓、微弱拨奏。",
+        "scenarios": "工作场景、效率内容、品牌化日常 vlog。",
+        "style": "modern piano pop, clean vlog music",
+        "style_tag": "轻松愉悦",
+        "summary": "清爽利落的现代钢琴配乐，适合工作、效率、品牌化一点的日常生活内容。"
+      },
+      "source_file_path": "013_clean_lifestyle_piano.mp3"
+    },
+    "018_pet_play_piano.mp3": {
+      "file_path": "018_pet_play_piano.mp3",
+      "analysis": {
+        "rhythm": "中速，弹跳灵动节奏。",
+        "emotion": "可爱、活泼、俏皮。",
+        "timbre": "明亮、可爱、生动。",
+        "instruments": "钢琴、低音贝斯、轻打击乐、微弱铃声。",
+        "scenarios": "宠物 vlog、搞笑日常短片、俏皮剪辑。",
+        "style": "cute piano pop, playful vlog music",
+        "style_tag": "轻松愉悦",
+        "summary": "可爱跳跃的钢琴配乐，主旋律灵动、配器简单，适合宠物和搞笑生活片段。"
+      },
+      "source_file_path": "018_pet_play_piano.mp3"
+    },
+    "022_holiday_piano_breeze.mp3": {
+      "file_path": "022_holiday_piano_breeze.mp3",
+      "analysis": {
+        "rhythm": "中速，轻快浮动节奏。",
+        "emotion": "阳光、轻盈、欢快。",
+        "timbre": "明亮、通透、无忧无虑。",
+        "instruments": "钢琴、低音贝斯、轻鼓、微弱吉他。",
+        "scenarios": "海滩 vlog、假日蒙太奇、夏日出行剪辑。",
+        "style": "holiday piano pop, travel lifestyle music",
+        "style_tag": "轻松愉悦",
+        "summary": "假日感很强的明亮钢琴配乐，旋律轻松顺口，适合海边、夏天和度假剪辑。"
+      },
+      "source_file_path": "022_holiday_piano_breeze.mp3"
+    }
+  }
+}
