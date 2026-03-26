@@ -1,3 +1,6 @@
 __pycache__
-flama
+*.pyc
 models
+bin
+resource
+.venv
