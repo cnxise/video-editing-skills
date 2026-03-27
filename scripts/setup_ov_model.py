@@ -28,72 +28,30 @@ setup_ov_model.py - 从 HuggingFace 下载 OpenVINO/Qwen2.5-VL-7B-Instruct-int4-
     # 只校验已有模型是否存在，不执行下载
     python setup_ov_model.py --check-only
 
-依赖（运行前需安装）：
-    pip install huggingface_hub
+说明：
+    脚本会优先确保并复用 <SKILL_DIR>/.venv，
+    依赖安装以 requirements.txt 为准。
 """
 
 import argparse
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# 路径常量
-# ---------------------------------------------------------------------------
-SCRIPT_DIR = Path(__file__).resolve().parent
-SKILL_DIR = SCRIPT_DIR.parent
-MODELS_DIR = SKILL_DIR / "models"
+from skill_runtime import (
+    DEFAULT_MODEL_DIR,
+    DEFAULT_MODEL_NAME,
+    MODELS_DIR,
+    ensure_skill_requirements,
+    maybe_reexec_in_skill_venv,
+)
 
 # HuggingFace 模型 ID（已转换好的 OpenVINO INT4 模型）
 HF_MODEL_ID = "OpenVINO/Qwen2.5-VL-7B-Instruct-int4-ov"
 
-# 默认输出子目录名
-DEFAULT_OUTPUT_NAME = "Qwen2.5-VL-7B-Instruct-int4"
-
 # HF 镜像站地址（国内网络推荐使用）
 HF_MIRROR_URL = "https://hf-mirror.com"
-
-# 虚拟环境所需依赖（最小集合）
-VENV_PACKAGES = ["huggingface_hub"]
-
-
-# ---------------------------------------------------------------------------
-# 虚拟环境管理
-# ---------------------------------------------------------------------------
-
-def _get_venv_python() -> "Path | None":
-    """返回 <SKILL_DIR>/.venv 中的 Python 可执行路径，不存在返回 None。"""
-    candidate = SKILL_DIR / ".venv" / "Scripts" / "python.exe"
-    return candidate if candidate.exists() else None
-
-
-def _ensure_venv(packages: list) -> None:
-    """确保 <SKILL_DIR>/.venv 存在并安装了指定包列表。"""
-    venv_dir = SKILL_DIR / ".venv"
-    venv_python = _get_venv_python()
-
-    if venv_python is None:
-        print(f"[venv] 虚拟环境不存在，正在创建：{venv_dir}")
-        subprocess.run(
-            [sys.executable, "-m", "venv", str(venv_dir)],
-            check=True,
-        )
-        venv_python = _get_venv_python()
-        if venv_python is None:
-            raise RuntimeError(f"创建虚拟环境后仍找不到 Python 可执行文件：{venv_dir}")
-        print(f"[venv] ✓ 虚拟环境已创建：{venv_dir}")
-    else:
-        print(f"[venv] 已找到虚拟环境：{venv_python}")
-
-    if packages:
-        print(f"[venv] 安装依赖：{', '.join(packages)}")
-        subprocess.run(
-            [str(venv_python), "-m", "pip", "install", "--quiet", *packages],
-            check=True,
-        )
-        print(f"[venv] ✓ 依赖安装完成")
 
 
 # ---------------------------------------------------------------------------
@@ -292,8 +250,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         metavar="PATH",
         help=(
-            f"模型存放目录。未指定时默认为 <SKILL_DIR>/models/{DEFAULT_OUTPUT_NAME} "
-            f"(当前: {MODELS_DIR / DEFAULT_OUTPUT_NAME})"
+            f"模型存放目录。未指定时默认为 <SKILL_DIR>/models/{DEFAULT_MODEL_NAME} "
+            f"(当前: {DEFAULT_MODEL_DIR})"
         ),
     )
     parser.add_argument(
@@ -339,12 +297,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    try:
-        _ensure_venv(VENV_PACKAGES)
-    except Exception as exc:
-        print(f"[venv] 警告：无法创建/配置虚拟环境，将尝试使用系统环境：{exc}", file=sys.stderr)
-
     args = parse_args()
+
+    try:
+        ensure_skill_requirements(force=False)
+        maybe_reexec_in_skill_venv(Path(__file__).resolve())
+    except Exception as exc:
+        print(f"[venv] ✗ 统一虚拟环境准备失败：{exc}", file=sys.stderr)
+        return 1
 
     # 确定 HF_ENDPOINT
     if args.no_mirror:
@@ -356,7 +316,7 @@ def main() -> int:
     if args.model_dir:
         model_dir = Path(args.model_dir)
     else:
-        model_dir = MODELS_DIR / DEFAULT_OUTPUT_NAME
+        model_dir = DEFAULT_MODEL_DIR
 
     print("=" * 60)
     print("OpenVINO 模型下载脚本")

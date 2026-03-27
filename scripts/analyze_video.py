@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 analyze_video.py - 阶段 2：纯 Python 视频分析，替代 FLAMA。
 
@@ -43,15 +45,16 @@ import sys
 import time
 from pathlib import Path
 
-import cv2
-import numpy as np
-from PIL import Image
+from skill_runtime import (
+    DEFAULT_MODEL_DIR,
+    SKILL_DIR,
+    ensure_skill_requirements,
+    maybe_reexec_in_skill_venv,
+)
 
-# ---------------------------------------------------------------------------
-# 路径常量
-# ---------------------------------------------------------------------------
-SCRIPT_DIR = Path(__file__).resolve().parent
-SKILL_DIR = SCRIPT_DIR.parent
+cv2 = None
+np = None
+Image = None
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".wmv"}
 
@@ -60,12 +63,22 @@ DEFAULT_PROMPT = (
     "画面构图、光线氛围、运镜方式。输出不超过100字的简要描述。"
 )
 
-DEFAULT_MODEL_DIR = SKILL_DIR / "models" / "Qwen2.5-VL-7B-Instruct-int4"
-
-
 # ---------------------------------------------------------------------------
 # 视频发现
 # ---------------------------------------------------------------------------
+
+def load_runtime_dependencies() -> None:
+    global cv2, np, Image
+    if cv2 is not None and np is not None and Image is not None:
+        return
+
+    import cv2 as cv2_module
+    import numpy as np_module
+    from PIL import Image as image_module
+
+    cv2 = cv2_module
+    np = np_module
+    Image = image_module
 
 def discover_videos(video_dir: Path) -> list[Path]:
     """扫描目录顶层查找视频文件，按文件名排序。"""
@@ -308,6 +321,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
+    try:
+        ensure_skill_requirements(force=False)
+        maybe_reexec_in_skill_venv(Path(__file__).resolve())
+        load_runtime_dependencies()
+    except Exception as exc:
+        print(f"错误：统一 .venv 准备失败：{exc}", file=sys.stderr)
+        return 1
+
     # 参数校验
     if args.seg_duration <= 0:
         print("错误：--seg-duration 必须为正数", file=sys.stderr)
@@ -328,7 +349,7 @@ def main() -> int:
     # 验证模型目录
     if not model_dir.is_dir():
         print(f"错误：模型目录不存在：{model_dir}", file=sys.stderr)
-        print("请运行：python scripts/setup_ov_model.py", file=sys.stderr)
+        print("请先重新执行阶段 1：prepare_workspace.py，或运行 bootstrap.py", file=sys.stderr)
         return 1
 
     # 发现视频

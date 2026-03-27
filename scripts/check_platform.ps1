@@ -7,16 +7,14 @@
       条件 A - Intel 白名单独显：Arc A770（16GB）/ Arc B580（12GB），CPU 型号不限
       条件 B - Intel iGPU 平台：MTL / LNL / ARL / PTL CPU + Intel iGPU + 内存 > 16 GB
 
-    阶段 2 - Python 3.12.x 检查：
-      若未找到 Python 3.12.x，自动尝试安装：
-        方法 1：winget install Python.Python.3.12
-        方法 2：下载官方安装包 python-3.12.x-amd64.exe 静默安装
+    阶段 2 - Python >= 3.10 检查：
+      仅检查宿主 Python 是否可用，不再执行系统级自动安装。
+      项目本地 .venv、requirements、ffmpeg、模型的准备统一放到阶段 1：准备。
 
     两阶段全部通过 → exit 0；任一失败 → exit 1
 
 .NOTES
     扩展独显白名单：在 $DGPU_WHITELIST 数组中追加型号编号即可。
-    指定 Python 回退版本：修改 $PYTHON_FALLBACK_VERSION 常量。
 #>
 
 # ============================================================
@@ -28,9 +26,6 @@
 $DGPU_WHITELIST = @("A770", "B580", "B50" ,"B60")
 $dGpuPattern    = $DGPU_WHITELIST -join "|"
 
-# winget 不可用时，从 python.org 下载的回退版本（需要 Python >= 3.10）
-$PYTHON_FALLBACK_VERSION = "3.12.9"
-$PYTHON_INSTALLER_URL    = "https://www.python.org/ftp/python/$PYTHON_FALLBACK_VERSION/python-$PYTHON_FALLBACK_VERSION-amd64.exe"
 $PYTHON_MIN_MAJOR = 3
 $PYTHON_MIN_MINOR = 10
 
@@ -70,17 +65,13 @@ function Find-PythonMin {
 
 function Get-PythonVersion([string]$cmd) {
     try {
-        if ($cmd -eq "py -3.12") {
-            return "$(& py -3.12 --version 2>&1)".Trim()
+        if ($cmd.StartsWith("py -")) {
+            $parts = $cmd.Split(" ", 2)
+            $pyArg = $parts[1]
+            return "$(& py $pyArg --version 2>&1)".Trim()
         }
         return "$(& $cmd --version 2>&1)".Trim()
     } catch { return "unknown" }
-}
-
-function Refresh-Path {
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") `
-              + ";" `
-              + [System.Environment]::GetEnvironmentVariable("Path","User")
 }
 
 # ============================================================
@@ -162,10 +153,10 @@ Write-Host "============================================================"
 Write-Host "✅ 阶段 1 通过"
 
 # ============================================================
-# 阶段 2：Python 3.12.x 检查与自动安装
+# 阶段 2：Python >= 3.10 检查
 # ============================================================
 Write-Host ""
-Write-Host "=== 阶段 2：Python 3.12.x 环境检查 ========================="
+Write-Host "=== 阶段 2：Python >= 3.10 环境检查 ========================"
 
 $pythonCmd = Find-PythonMin
 
@@ -173,78 +164,14 @@ if ($pythonCmd) {
     $verStr = Get-PythonVersion $pythonCmd
     Write-Host "✅ [PASS] Python >= $PYTHON_MIN_MAJOR.$PYTHON_MIN_MINOR：$verStr（命令：$pythonCmd）"
 } else {
-    Write-Host "⚠️  [WARN] 未找到 Python >= $PYTHON_MIN_MAJOR.$PYTHON_MIN_MINOR，尝试自动安装 $PYTHON_FALLBACK_VERSION..."
+    Write-Host "❌ [FAIL] 未找到 Python >= $PYTHON_MIN_MAJOR.$PYTHON_MIN_MINOR。"
     Write-Host ""
-    $installed = $false
-
-    # ── 方法 1：winget ─────────────────────────────────────
-    Write-Host "  [方法 1] 尝试通过 winget 安装 Python 3.12..."
-    $wingetExe = Get-Command winget -ErrorAction SilentlyContinue
-    if ($wingetExe) {
-        try {
-            winget install Python.Python.3.12 -e --silent `
-                --accept-package-agreements --accept-source-agreements
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "  ✅ winget 安装完成"
-                $installed = $true
-            } else {
-                Write-Host "  ⚠️  winget 返回码 $LASTEXITCODE，尝试方法 2..."
-            }
-        } catch {
-            Write-Host "  ⚠️  winget 执行异常：$_，尝试方法 2..."
-        }
-    } else {
-        Write-Host "  ⚠️  winget 不可用，尝试方法 2..."
-    }
-
-    # ── 方法 2：官方安装包 ─────────────────────────────────
-    if (-not $installed) {
-        Write-Host ""
-        Write-Host "  [方法 2] 下载官方安装包 Python $PYTHON_FALLBACK_VERSION ..."
-        Write-Host "  URL：$PYTHON_INSTALLER_URL"
-        $tmpInstaller = Join-Path $env:TEMP "python-$PYTHON_FALLBACK_VERSION-amd64.exe"
-        try {
-            Write-Host "  正在下载..."
-            Invoke-WebRequest -Uri $PYTHON_INSTALLER_URL -OutFile $tmpInstaller -UseBasicParsing
-            Write-Host "  正在静默安装（InstallAllUsers=1 PrependPath=1）..."
-            $proc = Start-Process -FilePath $tmpInstaller `
-                -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0" `
-                -Wait -PassThru
-            Remove-Item $tmpInstaller -Force -ErrorAction SilentlyContinue
-            if ($proc.ExitCode -eq 0) {
-                Write-Host "  ✅ 官方安装包安装完成"
-                $installed = $true
-            } else {
-                Write-Host "  ❌ 安装包返回码：$($proc.ExitCode)"
-            }
-        } catch {
-            Remove-Item $tmpInstaller -Force -ErrorAction SilentlyContinue
-            Write-Host "  ❌ 下载或安装失败：$_"
-        }
-    }
-
-    # ── 刷新 PATH 并重新检测 ───────────────────────────────
-    if ($installed) {
-        Write-Host ""
-        Write-Host "  刷新 PATH 并重新检测 Python >= $PYTHON_MIN_MAJOR.$PYTHON_MIN_MINOR..."
-        Refresh-Path
-        $pythonCmd = Find-PythonMin
-    }
-
-    if ($pythonCmd) {
-        $verStr = Get-PythonVersion $pythonCmd
-        Write-Host "✅ [PASS] Python 安装成功：$verStr（命令：$pythonCmd）"
-    } else {
-        Write-Host ""
-        Write-Host "❌ [FAIL] Python >= $PYTHON_MIN_MAJOR.$PYTHON_MIN_MINOR 安装后仍未检测到。"
-        Write-Host "   请关闭当前终端后重新打开，或手动安装 Python $PYTHON_FALLBACK_VERSION："
-        Write-Host "   https://www.python.org/downloads/release/python-3129/"
-        Write-Host "   安装时勾选 'Add Python to PATH' 并选择 'Install for all users'"
-        exit 1
-    }
+    Write-Host "   请先手动安装 Python 3.10+，然后再执行阶段 1：准备。"
+    Write-Host "   阶段 1 会统一创建 <SKILL_DIR>\\.venv 并安装 requirements / ffmpeg / 模型。"
+    exit 1
 }
 
 Write-Host "============================================================"
 Write-Host ""
-Write-Host "✅ 所有检查通过（硬件 + Python 3.12），可执行后续技能。"
+Write-Host "✅ 所有检查通过（硬件 + 宿主 Python），可执行阶段 1：准备。"
 exit 0

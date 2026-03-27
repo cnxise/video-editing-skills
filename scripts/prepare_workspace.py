@@ -1,10 +1,16 @@
 """
-prepare_workspace.py - 阶段 1：验证视频目录并创建工作区。
+prepare_workspace.py - 阶段 1：验证视频目录、创建工作区并完成统一准备。
+
+阶段 1 负责：
+    1. 检查 / 创建 <SKILL_DIR>/.venv
+    2. 按 requirements.txt 安装依赖到统一 .venv
+    3. 检查 / 下载 <SKILL_DIR>/bin/ffmpeg.exe 与 ffprobe.exe
+    4. 检查 / 下载 <SKILL_DIR>/models/Qwen2.5-VL-7B-Instruct-int4
+    5. 创建工作区并写入 runtime_env.json
 
 输入：
-    --video-dir   视频文件所在目录（必需）
+    --video-dir     视频文件所在目录（必需）
     --user-request  用户原始请求文本（可选，写入 user_input.txt）
-    --check-ffmpeg  检查 ffmpeg.exe 是否存在
 
 输出：
     成功时最后一行打印工作区绝对路径，退出码 0。
@@ -15,12 +21,13 @@ prepare_workspace.py - 阶段 1：验证视频目录并创建工作区。
 """
 
 import argparse
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-SKILL_DIR = SCRIPT_DIR.parent
+from bootstrap import bootstrap_environment
+from skill_runtime import write_runtime_manifest
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".wmv"}
 
@@ -38,7 +45,31 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="阶段 1：验证视频目录并创建工作区")
     parser.add_argument("--video-dir", required=True, help="视频文件所在目录")
     parser.add_argument("--user-request", default=None, help="用户原始请求文本")
-    parser.add_argument("--check-ffmpeg", action="store_true", help="检查 ffmpeg.exe 是否存在")
+    parser.add_argument(
+        "--check-ffmpeg",
+        action="store_true",
+        help="兼容旧参数；阶段 1 现在总会处理 ffmpeg / ffprobe",
+    )
+    parser.add_argument(
+        "--skip-model",
+        action="store_true",
+        help="跳过模型准备（仅调试用）",
+    )
+    parser.add_argument(
+        "--force-requirements",
+        action="store_true",
+        help="强制重新安装 requirements.txt",
+    )
+    parser.add_argument(
+        "--force-ffmpeg",
+        action="store_true",
+        help="强制重新下载 ffmpeg / ffprobe",
+    )
+    parser.add_argument(
+        "--force-model",
+        action="store_true",
+        help="强制重新下载模型",
+    )
     args = parser.parse_args()
 
     video_dir = Path(args.video_dir).resolve()
@@ -73,15 +104,28 @@ def main() -> int:
         except OSError as e:
             print(f"[准备] 警告：无法保存用户请求：{e}", file=sys.stderr)
 
-    # 4. 检查 ffmpeg
-    if args.check_ffmpeg:
-        ffmpeg_path = SKILL_DIR / "bin" / "ffmpeg.exe"
-        if ffmpeg_path.exists():
-            print(f"[准备] ✓ ffmpeg 已就绪：{ffmpeg_path}")
-        else:
-            print(f"[准备] ✗ ffmpeg 未找到：{ffmpeg_path}", file=sys.stderr)
-            print("[准备]   请运行：python scripts/setup_resources.py", file=sys.stderr)
-            return 1
+    # 4. 统一准备运行时
+    try:
+        print("[准备] 开始统一准备 .venv / requirements / ffmpeg / model ...")
+        runtime = bootstrap_environment(
+            force_requirements=args.force_requirements,
+            force_ffmpeg=args.force_ffmpeg,
+            force_model=args.force_model,
+            skip_model=args.skip_model,
+        )
+        print("[准备] ✓ 运行时准备完成")
+        print(json.dumps(runtime, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"[准备] ✗ 运行时准备失败：{e}", file=sys.stderr)
+        return 1
+
+    # 5. 写入运行时清单
+    try:
+        manifest_path = write_runtime_manifest(workspace)
+        print(f"[准备] runtime_env.json 已写入：{manifest_path}")
+    except OSError as e:
+        print(f"[准备] ✗ 无法写入 runtime_env.json：{e}", file=sys.stderr)
+        return 1
 
     # 最后一行输出工作区路径
     print(str(workspace))
