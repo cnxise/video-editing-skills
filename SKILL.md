@@ -145,13 +145,9 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 
 ## 阶段 2：分析
 
-### 步骤 2.1 读取运行时清单
+### 步骤 2.1 确认阶段 1 已完成
 
-优先读取 `<WORKSPACE_DIR>\runtime_env.json`。若存在，使用其中的：
-- `venv_python` 作为 `<VENV_PYTHON>`
-- `model_dir` 作为实际模型路径
-
-如果 `runtime_env.json` 缺失，说明阶段 1 未完整执行，必须返回阶段 1，禁止跳过。
+确认 `<WORKSPACE_DIR>` 已存在、`.venv` 已就绪、模型目录完整。若阶段 1 未执行，必须返回阶段 1。
 
 ### 步骤 2.2 运行分析
 
