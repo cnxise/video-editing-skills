@@ -311,7 +311,7 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 **BGM 音频行为**（compose_video.py 自动处理）：
 - BGM 循环播放至视频结束，自动淡入 1s + 淡出 1.5s
 - 如原视频含音频（人声/环境音），自动混合保留
-- 默认 BGM 音量 0.3（可通过 `--bgm-volume` 调整）
+- BGM 通过 amix 与原视频音频混合
 
 **无匹配时回退**：首选分类无合适曲目 → 查备选分类 → 仍无 → 任选一首
 
@@ -485,7 +485,6 @@ print("PASS" if deviation <= threshold else "FAIL")
 | `--storyboard` | — | storyboard.json 路径（必需） |
 | `--font-size` | `60` | 字幕字号 |
 | `--max-line-len` | `16` | 每行最大字符数 |
-| `--bgm-volume` | `0.3` | BGM 音量（0.0-1.0） |
 | `--dry-run` | — | 仅打印命令不执行（调试用） |
 
 **输出文件：** `<WORKSPACE_DIR>\<theme>_<duration>s_bgm.mp4`
