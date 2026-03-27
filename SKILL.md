@@ -514,7 +514,7 @@ print("PASS" if deviation <= threshold else "FAIL")
 | 每次新建工作区 | 禁止从已有 `editing_*` 工作区读取任何文件 |
 | 阶段 1 统一准备 | `.venv` / requirements / ffmpeg / 模型必须在阶段 1 完成 |
 | 后续统一解释器 | 阶段 2 / 4 必须使用 `<SKILL_DIR>\.venv\Scripts\python.exe` |
-| 始终重新分析 | 绝不复用 output_vlm.json |
+| VLM 分析 | 默认重新运行；快速模式下可复用 `<VIDEO_DIR>\output_vlm.json` |
 | 始终重新生成分镜 | 绝不复用 storyboard.json |
 | 禁止重复片段 | (source_video, source_segment_id) 必须唯一 |
 | BGM 绝对路径 | file_path 必须是绝对路径 |
