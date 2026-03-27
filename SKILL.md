@@ -416,13 +416,9 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 - `in_point`：该 seg_id 的 `seg_start` 值
 - `out_point`：该 seg_id 的 `seg_end` 值
 - `duration`：必须等于 `out_point - in_point`，且 > 0
-<<<<<<< HEAD
 - `voiceover.text`：字幕文本,**不能为空字幕**
 - `transition.type`：转场类型（见上表），最后一个片段省略此字段
 - `transition.duration`：转场时长，默认 0.8 秒
-=======
-- `voiceover.text`：字幕文本，不能为空字幕
->>>>>>> parent of 8a9b5be (fix temp video longer than expected)
 - `file_path`：BGM 的**绝对路径**
 
 #### 写入前必须验证
