@@ -7,7 +7,7 @@ description:
   video storyboard、editing script，或需要从 storyboard.json 渲染成片时使用。
 ---
 
-# Vlog 分镜脚本生成器
+# 全自动视频剪辑 Agent
 
 AI 驱动的 vlog 剪辑工作流：视频分析 → 分镜脚本生成 → 最终视频合成。
 
@@ -308,7 +308,45 @@ python "<SKILL_DIR>\scripts\analyze_video.py" --video-dir "<VIDEO_DIR>" --output
 
 **无匹配时回退**：首选分类无合适曲目 → 查备选分类 → 仍无 → 任选一首
 
-### 步骤 3.5 输出 storyboard.json
+### 步骤 3.5 转场效果选择
+
+为每个片段（除最后一个）选择到下一个片段的转场效果。转场应自然流畅，不生硬突兀。
+
+**可用转场类型：**
+
+| 转场 | 效果 | 适用场景 |
+|------|------|----------|
+| `fade` | 淡入淡出 | **默认**，万能，任何场景 |
+| `dissolve` | 溶解 | 叙事连贯、场景自然过渡 |
+| `fadeblack` | 经黑色过渡 | 时间流逝、章节分隔 |
+| `fadewhite` | 经白色过渡 | 梦幻/回忆感 |
+| `smoothleft` | 平滑左移 | 空间延续、方向性运动 |
+| `smoothright` | 平滑右移 | 空间延续、方向性运动 |
+| `smoothup` | 平滑上移 | 情感升华 |
+| `smoothdown` | 平滑下移 | 节奏放缓 |
+| `circleopen` | 圆形展开 | 现代感点缀（少用） |
+| `circleclose` | 圆形收缩 | 聚焦/收束（少用） |
+
+**按叙事位置选择转场：**
+
+| 位置 | 推荐转场 | 原因 |
+|------|----------|------|
+| 开场→引入 | `fade` | 柔和进入 |
+| 引入→递进 | `dissolve` | 自然衔接 |
+| 递进段之间 | `fade` 或 `dissolve` 交替 | 保持流畅 |
+| 递进→高潮 | `fadeblack` | 情感升华 |
+| 高潮→收尾 | `dissolve` | 情感过渡 |
+| 收尾→结束 | `fadeblack` | 留下余韵 |
+
+**规则：**
+- 默认 `transition.duration` = `0.5` 秒
+- 60%+ 片段使用 `fade`/`dissolve`，其他转场偶尔点缀
+- `smooth*` 仅在镜头有方向运动时使用
+- `circle*` 整个视频最多 1-2 次
+- 最后一个片段**不加**转场（无后续片段）
+- 注意：转场会使总时长缩短（每个 0.5s 转场减少 0.5s 总时长）
+
+### 步骤 3.6 输出 storyboard.json
 
 **始终重新生成，绝不复用。** 写入 `<WORKSPACE_DIR>\storyboard.json`。
 
@@ -317,7 +355,7 @@ python "<SKILL_DIR>\scripts\analyze_video.py" --video-dir "<VIDEO_DIR>" --output
 {
   "storyboard_metadata": {
     "theme": "摩旅自由行",
-    "target_duration_seconds": 30,
+    "target_duration_seconds": 30
   },
   "clips": [
     {
@@ -332,6 +370,10 @@ python "<SKILL_DIR>\scripts\analyze_video.py" --video-dir "<VIDEO_DIR>" --output
       },
       "voiceover": {
         "text": "风从耳边呼啸而过"
+      },
+      "transition": {
+        "type": "fade",
+        "duration": 0.5
       }
     },
     {
@@ -345,14 +387,14 @@ python "<SKILL_DIR>\scripts\analyze_video.py" --video-dir "<VIDEO_DIR>" --output
         "duration": 3.0
       },
       "voiceover": {
-        "text": ""
+        "text": "这一刻什么都不想"
       }
     }
   ],
   "audio_design": {
     "background_music": {
-      "file_path": "D:\\tools\\video-editing-skills\\resource\\bgm\\4e6976bc4aaacf27d6f89767c3aaf63e.mp3",
-      "style_tag": "活泼欢快"
+      "file_path": "D:\\tools\\video-editing-skills\\resource\\bgm\\xxx.mp3",
+      "style_tag": "舒缓优美"
     }
   }
 }
@@ -366,7 +408,9 @@ python "<SKILL_DIR>\scripts\analyze_video.py" --video-dir "<VIDEO_DIR>" --output
 - `in_point`：该 seg_id 的 `seg_start` 值
 - `out_point`：该 seg_id 的 `seg_end` 值
 - `duration`：必须等于 `out_point - in_point`，且 > 0
-- `voiceover.text`：字幕文本，**不能为空字幕**
+- `voiceover.text`：字幕文本,**不能为空字幕**
+- `transition.type`：转场类型（见上表），最后一个片段省略此字段
+- `transition.duration`：转场时长，默认 0.5 秒
 - `file_path`：BGM 的**绝对路径**
 
 #### 写入前必须验证
@@ -377,9 +421,14 @@ python "<SKILL_DIR>\scripts\analyze_video.py" --video-dir "<VIDEO_DIR>" --output
 4. ☐ 每个 `source_segment_id` 在 output_vlm.json 对应视频的 seg_id 范围内
 5. ☐ 无重复的 `(source_video, source_segment_id)` 组合
 6. ☐ `file_path` 是绝对路径且 BGM 文件存在
-7. ☐ 片段总时长偏差 ≤ target × 20%
+7. ☐ `transition.type` 必须是上表中的有效值
+8. ☐ 最后一个片段不含 transition
+9. ☐ 实际输出时长偏差 ≤ target × 20%（实际时长 = sum(durations) - 转场重叠总量）
 
-**时长偏差恢复**：如果 `abs(sum(durations) - target) > target * 0.2`：
+**实际输出时长计算**：`sum(clip durations) - (转场数 × transition_duration)`
+例如：10个 3s 片段 + 9个 0.5s 转场 → 30 - 4.5 = 25.5s
+
+**时长偏差恢复**：如果实际输出时长与 target 偏差 > 20%：
 - 总时长偏长 → 移除叙事贡献最低的 1-2 个片段
 - 总时长偏短 → 添加 1-2 个与叙事匹配的新片段
 - 调整后重新验证，直到偏差 ≤ 20%
@@ -399,10 +448,13 @@ import json
 with open("<WORKSPACE_DIR>/storyboard.json", encoding="utf-8") as f:
     sb = json.load(f)
 target = sb["storyboard_metadata"]["target_duration_seconds"]
-total_duration = sum(c["timecode"]["duration"] for c in sb["clips"])
-deviation = abs(total_duration - target)
+clips = sb["clips"]
+raw_duration = sum(c["timecode"]["duration"] for c in clips)
+overlap = sum(c["transition"]["duration"] for c in clips if c.get("transition"))
+actual_duration = raw_duration - overlap
+deviation = abs(actual_duration - target)
 threshold = target * 0.20
-print(f"target={target}s total={total_duration:.1f}s deviation={deviation:.1f}s threshold={threshold:.1f}s")
+print(f"target={target}s raw={raw_duration:.1f}s overlap={overlap:.1f}s actual={actual_duration:.1f}s deviation={deviation:.1f}s")
 print("PASS" if deviation <= threshold else "FAIL")
 ```
 
