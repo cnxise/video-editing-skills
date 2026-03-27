@@ -36,7 +36,6 @@ class StoryboardMeta:
     theme: str
     target_duration: Optional[float]
     actual_duration: Optional[float]
-    cloud_llm_name: str
 
 
 def coerce_float(value: object) -> Optional[float]:
@@ -118,11 +117,6 @@ def load_storyboard(
         or story_outline.get("title")
         or "video"
     )
-    cloud_llm_name = (
-        storyboard_metadata.get("cloud_llm_name")
-        or storyboard_metadata.get("llm_name")
-        or "cloud_llm"
-    )
     meta = StoryboardMeta(
         theme=str(theme_value).strip() or "video",
         target_duration=coerce_float(
@@ -131,7 +125,6 @@ def load_storyboard(
         actual_duration=coerce_float(
             storyboard_metadata.get("actual_duration_seconds")
         ),
-        cloud_llm_name=str(cloud_llm_name).strip() or "cloud_llm",
     )
 
     audio_design = data.get("audio_design") or {}
@@ -835,8 +828,7 @@ def build_final_output_name(meta: StoryboardMeta, clips: List[ClipSpec]) -> str:
         format_duration_component(meta.target_duration, meta.actual_duration, clips),
         "unknown",
     )
-    llm_name = sanitize_filename_component(meta.cloud_llm_name, "cloud_llm")
-    return f"{theme}_{duration}_bgm_{llm_name}.mp4"
+    return f"{theme}_{duration}_bgm.mp4"
 
 
 def parse_args() -> argparse.Namespace:
@@ -863,7 +855,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Deprecated. Ignored. Final output is always named "
-            "'{theme}_{duration}_bgm_{cloud_llm}.mp4' in the output folder."
+            "'{theme}_{duration}_bgm.mp4' in the output folder."
         ),
     )
     parser.add_argument(
@@ -911,11 +903,6 @@ def main() -> int:
         print(
             "Warning: storyboard_metadata.theme is missing. "
             "Using default value 'video' for output naming."
-        )
-    if meta.cloud_llm_name == "cloud_llm":
-        print(
-            "Warning: storyboard_metadata.cloud_llm_name is missing. "
-            "Using default value 'cloud_llm' for output naming."
         )
     if meta.target_duration is None and meta.actual_duration is None:
         print(
