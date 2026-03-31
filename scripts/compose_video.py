@@ -193,6 +193,31 @@ def load_storyboard(
     return sorted(specs, key=lambda c: c.sequence_order), bgm_path, meta
 
 
+def parse_resolution(res_str: str) -> Tuple[int, int]:
+    """解析 'WxH' 或 'W:H' 格式的分辨率字符串，返回 (width, height)。"""
+    for sep in ("x", "X", ":"):
+        if sep in res_str:
+            parts = res_str.split(sep, 1)
+            try:
+                w, h = int(parts[0]), int(parts[1])
+                if w > 0 and h > 0:
+                    return w, h
+            except (ValueError, IndexError):
+                pass
+    raise ValueError(
+        f"Invalid resolution format '{res_str}'. Expected 'WxH', e.g. '1920x1080'."
+    )
+
+
+def build_scale_pad_filter(width: int, height: int) -> str:
+    """构建 scale+pad 归一化滤镜，保持原始宽高比，不足部分填黑边。"""
+    return (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"setsar=1"
+    )
+
+
 def wrap_text(text: str, max_len: int) -> str:
     if not text:
         return ""
@@ -512,14 +537,22 @@ def add_bgm_to_video(
 
 def render_subtitle(
     ffmpeg: str,
-    input_video: Path,
+    source_video: Path,
     output_video: Path,
+    in_point: float,
+    clip_duration: float,
     subtitle_text: str,
     font_file: Optional[Path],
     font_size: int,
     max_line_len: int,
     dry_run: bool,
+    target_resolution: Optional[Tuple[int, int]] = None,
 ) -> None:
+    """从源视频直接提取+渲染字幕，单步完成。
+
+    使用 input-side seek（-ss 在 -i 之前）配合 re-encode，ffmpeg 的 accurate_seek
+    会从关键帧解码但只编码 in_point 之后的帧，彻底避免 copy 模式的 pre-roll 问题。
+    """
     subtitle_text = wrap_text(subtitle_text, max_line_len)
     escaped_text = escape_drawtext_text(subtitle_text)
 
@@ -551,29 +584,27 @@ def render_subtitle(
     )
     drawtext = "drawtext=" + ":".join(filter_parts)
 
+    if target_resolution:
+        w, h = target_resolution
+        vf = f"{build_scale_pad_filter(w, h)},{drawtext}"
+    else:
+        vf = drawtext
+
     cmd = [
         ffmpeg,
         "-y",
-        "-i",
-        str(input_video),
-        "-vf",
-        drawtext,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "medium",
-        "-crf",
-        "20",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-ar",
-        "48000",
-        "-ac",
-        "2",
+        "-ss", f"{in_point}",
+        "-i", str(source_video),
+        "-t", f"{clip_duration}",
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "20",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-ar", "48000",
+        "-ac", "2",
         str(output_video),
     ]
     run_cmd(cmd, dry_run=dry_run)
@@ -581,31 +612,34 @@ def render_subtitle(
 
 def transcode_clip(
     ffmpeg: str,
-    input_video: Path,
+    source_video: Path,
     output_video: Path,
+    in_point: float,
+    clip_duration: float,
     dry_run: bool,
+    target_resolution: Optional[Tuple[int, int]] = None,
 ) -> None:
+    """从源视频直接提取+转码，单步完成（无字幕版本）。"""
+    vf_args: List[str] = []
+    if target_resolution:
+        w, h = target_resolution
+        vf_args = ["-vf", build_scale_pad_filter(w, h)]
+
     cmd = [
         ffmpeg,
         "-y",
-        "-i",
-        str(input_video),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "medium",
-        "-crf",
-        "20",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-ar",
-        "48000",
-        "-ac",
-        "2",
+        "-ss", f"{in_point}",
+        "-i", str(source_video),
+        "-t", f"{clip_duration}",
+        *vf_args,
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "20",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-ar", "48000",
+        "-ac", "2",
         str(output_video),
     ]
     run_cmd(cmd, dry_run=dry_run)
@@ -884,6 +918,16 @@ def parse_args() -> argparse.Namespace:
         help="Max characters per subtitle line",
     )
     parser.add_argument(
+        "--target-resolution",
+        default="1920x1080",
+        help=(
+            "Normalize all clips to this resolution before concatenation. "
+            "Preserves aspect ratio and adds black letterbox/pillarbox padding. "
+            "Format: WxH (e.g. '1920x1080', '3840x2160'). "
+            "Default: 1920x1080"
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print ffmpeg commands without executing",
@@ -927,6 +971,14 @@ def main() -> int:
             "Final output name is derived from storyboard metadata."
         )
 
+    target_resolution: Optional[Tuple[int, int]] = None
+    if args.target_resolution:
+        try:
+            target_resolution = parse_resolution(args.target_resolution)
+            print(f"Info: Target resolution = {target_resolution[0]}x{target_resolution[1]}")
+        except ValueError as e:
+            print(f"Warning: {e}. Resolution normalization disabled.")
+
     font_file = None
     if args.font_file:
         candidate = Path(args.font_file)
@@ -945,36 +997,33 @@ def main() -> int:
 
     for clip in clips:
         base = f"clip_{clip.sequence_order:02d}_id{clip.clip_id}"
-        raw_path = temp_dir / f"{base}_raw.mp4"
         subtitle_path = temp_dir / f"{base}_sub.mp4"
 
         print(f"\n== Processing clip {clip.sequence_order} (clip_id={clip.clip_id}) ==")
-        extract_clip(
-            ffmpeg=args.ffmpeg,
-            source_video=clip.source_video,
-            output_path=raw_path,
-            in_point=clip.in_point,
-            duration=clip.duration,
-            dry_run=args.dry_run,
-        )
 
         if clip.subtitle and subtitles_enabled:
             render_subtitle(
                 ffmpeg=args.ffmpeg,
-                input_video=raw_path,
+                source_video=clip.source_video,
                 output_video=subtitle_path,
+                in_point=clip.in_point,
+                clip_duration=clip.duration,
                 subtitle_text=clip.subtitle,
                 font_file=font_file,
                 font_size=args.font_size,
                 max_line_len=args.max_line_len,
                 dry_run=args.dry_run,
+                target_resolution=target_resolution,
             )
         else:
             transcode_clip(
                 ffmpeg=args.ffmpeg,
-                input_video=raw_path,
+                source_video=clip.source_video,
                 output_video=subtitle_path,
+                in_point=clip.in_point,
+                clip_duration=clip.duration,
                 dry_run=args.dry_run,
+                target_resolution=target_resolution,
             )
 
         processed_files.append(subtitle_path)
@@ -1023,6 +1072,22 @@ def main() -> int:
         expected_dur = total_clip_duration
 
     ffprobe = resolve_ffprobe(args.ffmpeg)
+
+    # 实测合并视频的真实时长作为 BGM 混流基准，避免公式计算值与实际不符导致的截断
+    if not args.dry_run and final_output.exists():
+        measured_merged_dur = get_media_duration(ffprobe, args.ffmpeg, final_output)
+        if measured_merged_dur and measured_merged_dur > 0:
+            if abs(measured_merged_dur - expected_dur) > 1.0:
+                print(
+                    f"Warning: measured merged duration {measured_merged_dur:.3f}s "
+                    f"differs from expected {expected_dur:.3f}s by more than 1s."
+                )
+            bgm_expected_dur: Optional[float] = measured_merged_dur
+        else:
+            bgm_expected_dur = expected_dur
+    else:
+        bgm_expected_dur = expected_dur
+
     bgm_output: Optional[Path] = None
     bgm_file = storyboard_bgm or find_bgm_file()
     if storyboard_bgm and not storyboard_bgm.exists():
@@ -1044,7 +1109,7 @@ def main() -> int:
             output_video=bgm_output,
             bgm_file=bgm_file,
             dry_run=args.dry_run,
-            expected_duration=expected_dur,
+            expected_duration=bgm_expected_dur,
         )
     else:
         bgm_output = output_dir / build_final_output_name(meta, clips)

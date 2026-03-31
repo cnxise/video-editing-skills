@@ -542,6 +542,7 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 | `--storyboard` | — | storyboard.json 路径（必需） |
 | `--font-size` | `60` | 字幕字号 |
 | `--max-line-len` | `16` | 每行最大字符数 |
+| `--target-resolution` | `1920x1080` | 所有片段统一缩放到此分辨率（保持原始宽高比，不足部分填黑边）。素材分辨率不一致时**必须设置**，否则转场拼接会失败。格式：`WxH`，如 `3840x2160` |
 | `--dry-run` | — | 仅打印命令不执行（调试用） |
 
 **输出文件：** `<WORKSPACE_DIR>\<theme>_<duration>s_bgm.mp4`
