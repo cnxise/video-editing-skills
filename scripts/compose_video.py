@@ -993,6 +993,71 @@ def main() -> int:
     if not subtitles_enabled:
         print("Warning: No font file found. Subtitles will be skipped.")
 
+    # -----------------------------
+    # storyboard 防越界校验（关键）
+    # -----------------------------
+    # 原理：storyboard.json 里的 in_point/out_point 如果超出 source_video 的实际 duration，
+    # 则会导致 extract/copy 得到 0s 或极短片段，进而在 xfade 链中静默截断。
+    #
+    # 策略：不直接 raise 终止；而是根据源视频时长，把片段的时间码钳位到可用范围。
+    # - out_point > source_duration：把 out_point 钳到末尾
+    # - in_point >= source_duration 或导致时长<=0：把 in_point 往前挪，使得 duration 尽量保持 clip.duration
+    ffprobe = resolve_ffprobe(args.ffmpeg)
+    eps = 0.1  # 容忍误差（秒），避免浮点/容器元数据偏差造成误判
+    for clip in clips:
+        try:
+            src_dur = get_media_duration(ffprobe, args.ffmpeg, clip.source_video)
+        except Exception as e:
+            print(f"Warning: failed to probe duration for {clip.source_video}: {e}")
+            continue
+
+        if src_dur is None or src_dur <= 0:
+            continue
+
+        desired_dur = float(clip.duration) if clip.duration and clip.duration > 0 else max(
+            0.0, float(clip.out_point - clip.in_point)
+        )
+        if desired_dur <= 0:
+            continue
+
+        orig_in, orig_out = float(clip.in_point), float(clip.out_point)
+        new_in, new_out = orig_in, orig_out
+
+        # 1) 先处理负数/越界 out
+        if new_in < 0:
+            new_in = 0.0
+        if new_out > src_dur - eps:
+            new_out = src_dur
+
+        # 2) 如果钳位后时长<=0：把 in_point 往前挪，让 duration 尽量保持 desired_dur
+        new_dur = new_out - new_in
+        if new_dur <= 0:
+            new_in = max(0.0, src_dur - desired_dur)
+            new_out = min(src_dur, new_in + desired_dur)
+            new_dur = new_out - new_in
+
+        # 3) 最终兜底：仍然<=0就抛错，避免后续生成 0s clip
+        if new_dur <= 0:
+            raise RuntimeError(
+                f"Storyboard timecode cannot be clamped to a valid range: "
+                f"clip_id={clip.clip_id}, sequence_order={clip.sequence_order}, "
+                f"source_duration={src_dur:.3f}s, in_point={orig_in:.3f}s, out_point={orig_out:.3f}s"
+            )
+
+        # 4) 只有发生明显变化才打印，减少噪声
+        if abs(new_in - orig_in) > eps or abs(new_out - orig_out) > eps:
+            print(
+                f"Warning: clamp storyboard timecode for clip_id={clip.clip_id}, "
+                f"sequence_order={clip.sequence_order}. "
+                f"in_point {orig_in:.3f}s -> {new_in:.3f}s, "
+                f"out_point {orig_out:.3f}s -> {new_out:.3f}s, "
+                f"duration -> {new_dur:.3f}s"
+            )
+
+        clip.in_point = float(new_in)
+        clip.out_point = float(new_out)
+        clip.duration = float(new_dur)
+
     processed_files: List[Path] = []
 
     for clip in clips:
