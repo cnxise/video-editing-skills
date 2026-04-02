@@ -420,6 +420,47 @@ def get_media_duration(
     return parse_duration_from_ffmpeg_output(result.stderr or result.stdout)
 
 
+def get_video_dimensions(ffprobe: str, video_path: Path) -> Optional[Tuple[int, int]]:
+    """使用 ffprobe 获取视频的 (width, height)，失败时返回 None。"""
+    cmd = [
+        ffprobe, "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=p=0",
+        str(video_path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            line = result.stdout.strip().split("\n")[0]
+            parts = line.split(",")
+            if len(parts) >= 2:
+                return int(parts[0]), int(parts[1])
+    except Exception:
+        pass
+    return None
+
+
+def compute_content_area(
+    src_w: int, src_h: int,
+    tgt_w: int, tgt_h: int,
+) -> Tuple[int, int, int, int]:
+    """计算 scale+pad 归一化后，源视频内容在目标帧中的位置。
+
+    返回 (content_w, content_h, pad_x, pad_y)：
+    - content_w/h：内容实际占据的像素尺寸（偶数，兼容 yuv420p）
+    - pad_x/y：内容左上角相对于目标帧的偏移量（letterbox/pillarbox 边距）
+    """
+    scale = min(tgt_w / src_w, tgt_h / src_h)
+    cw = int(src_w * scale)
+    ch = int(src_h * scale)
+    cw -= cw % 2  # 保证偶数
+    ch -= ch % 2
+    px = (tgt_w - cw) // 2
+    py = (tgt_h - ch) // 2
+    return cw, ch, px, py
+
+
 def has_audio_stream(
     ffprobe: str,
     ffmpeg: str,
@@ -547,6 +588,7 @@ def render_subtitle(
     max_line_len: int,
     dry_run: bool,
     target_resolution: Optional[Tuple[int, int]] = None,
+    src_dims: Optional[Tuple[int, int]] = None,
 ) -> None:
     """从源视频直接提取+渲染字幕，单步完成。
 
@@ -572,10 +614,20 @@ def render_subtitle(
     else:
         filter_parts.append(f"text='{escaped_text}'")
 
+    if target_resolution and src_dims:
+        tgt_w, tgt_h = target_resolution
+        src_w, src_h = src_dims
+        cw, ch, px, py = compute_content_area(src_w, src_h, tgt_w, tgt_h)
+        sub_x = f"{px}+(({cw})-text_w)/2"
+        sub_y = str(py + int(ch * 0.85))
+    else:
+        sub_x = "(w-text_w)/2"
+        sub_y = "h*0.85"
+
     filter_parts.extend(
         [
-            "x=(w-text_w)/2",
-            "y=h*0.85",
+            f"x={sub_x}",
+            f"y={sub_y}",
             f"fontsize={font_size}",
             "fontcolor=white",
             "box=1",
@@ -919,12 +971,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--target-resolution",
-        default="1920x1080",
+        default=None,
         help=(
             "Normalize all clips to this resolution before concatenation. "
             "Preserves aspect ratio and adds black letterbox/pillarbox padding. "
-            "Format: WxH (e.g. '1920x1080', '3840x2160'). "
-            "Default: 1920x1080"
+            "Format: WxH (e.g. '1920x1080', '1080x1920'). "
+            "Default: auto-detect from source clips (portrait majority → 1080x1920, "
+            "landscape majority → 1920x1080)."
         ),
     )
     parser.add_argument(
@@ -971,13 +1024,46 @@ def main() -> int:
             "Final output name is derived from storyboard metadata."
         )
 
+    ffprobe = resolve_ffprobe(args.ffmpeg)
+
+    # 探测所有源视频尺寸（去重），用于方向自动检测和字幕精确定位
+    unique_sources = {clip.source_video for clip in clips}
+    source_dims: dict = {}
+    for src in unique_sources:
+        source_dims[src] = get_video_dimensions(ffprobe, src)
+
+    # 按 clip_id 建立查找表，供后续 render_subtitle 使用
+    clip_src_dims = {clip.clip_id: source_dims.get(clip.source_video) for clip in clips}
+
     target_resolution: Optional[Tuple[int, int]] = None
     if args.target_resolution:
         try:
             target_resolution = parse_resolution(args.target_resolution)
-            print(f"Info: Target resolution = {target_resolution[0]}x{target_resolution[1]}")
+            print(f"Info: Target resolution = {target_resolution[0]}x{target_resolution[1]} (explicit)")
         except ValueError as e:
             print(f"Warning: {e}. Resolution normalization disabled.")
+    else:
+        # 自动检测：按数量多的方向决定输出分辨率
+        portrait_count = sum(1 for d in source_dims.values() if d and d[1] > d[0])
+        landscape_count = sum(1 for d in source_dims.values() if d and d[0] >= d[1])
+        total_probed = portrait_count + landscape_count
+        if total_probed > 0 and portrait_count > landscape_count:
+            target_resolution = (1080, 1920)
+            print(
+                f"Info: Auto-detected portrait majority "
+                f"({portrait_count}/{total_probed} clips). "
+                f"Target resolution: 1080x1920"
+            )
+        else:
+            target_resolution = (1920, 1080)
+            if total_probed > 0:
+                print(
+                    f"Info: Auto-detected landscape majority "
+                    f"({landscape_count}/{total_probed} clips). "
+                    f"Target resolution: 1920x1080"
+                )
+            else:
+                print("Info: Could not probe clip dimensions. Defaulting to 1920x1080.")
 
     font_file = None
     if args.font_file:
@@ -1002,7 +1088,6 @@ def main() -> int:
     # 策略：不直接 raise 终止；而是根据源视频时长，把片段的时间码钳位到可用范围。
     # - out_point > source_duration：把 out_point 钳到末尾
     # - in_point >= source_duration 或导致时长<=0：把 in_point 往前挪，使得 duration 尽量保持 clip.duration
-    ffprobe = resolve_ffprobe(args.ffmpeg)
     eps = 0.1  # 容忍误差（秒），避免浮点/容器元数据偏差造成误判
     for clip in clips:
         try:
@@ -1079,6 +1164,7 @@ def main() -> int:
                 max_line_len=args.max_line_len,
                 dry_run=args.dry_run,
                 target_resolution=target_resolution,
+                src_dims=clip_src_dims.get(clip.clip_id),
             )
         else:
             transcode_clip(
