@@ -15,7 +15,7 @@ analyze_video.py - 阶段 2：纯 Python 视频分析，替代 FLAMA。
     --seg-duration  段时长秒数（可选，默认 3.0）
     --frames-per-seg  每段提取帧数（可选，默认 4）
     --scale       帧缩放比例（可选，默认 0.25）
-    --max-tokens  VLM 最大生成 token 数（可选，默认 100）
+    --max-tokens  VLM 最大生成 token 数（可选，默认 100；若指定 --theme 则实际至少 160）
 
 输出：
     output_vlm.json 格式:
@@ -62,6 +62,21 @@ DEFAULT_PROMPT = (
     "准确的描述这个视频片段中的主要内容，包括：场景环境、人物动作、"
     "画面构图、光线氛围、运镜方式。输出不超过100字的简要描述。"
 )
+
+
+def build_theme_aware_prompt(theme: str) -> str:
+    """
+    带主题的 VLM 提示：首行固定【主题判定】，便于阅读与 select_clips 解析。
+    """
+    t = (theme or "").strip() or "（未指定）"
+    return (
+        f"剪辑主题为「{t}」。请观察本段画面后严格按下列格式输出（不要输出题外说明）：\n"
+        "\n"
+        "第1行（必须，三选一原文）：【主题判定】符合  或  【主题判定】不符合  或  【主题判定】部分符合\n"
+        "（「符合」= 画面明显体现该主题；「部分符合」= 仅有弱相关元素；「不符合」= 与主题无关或相悖。）\n"
+        "\n"
+        f"第2行起：{DEFAULT_PROMPT}"
+    )
 
 # ---------------------------------------------------------------------------
 # 视频发现
@@ -303,6 +318,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", "--json-file", required=True, dest="output",
                         help="输出 JSON 文件路径")
     parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="VLM 分析提示词")
+    parser.add_argument(
+        "--theme",
+        default=None,
+        help="剪辑主题；若指定且未自定义 --prompt（仍为默认描述提示），"
+        "将自动切换为「首行主题判定 + 画面描述」结构，供选片脚本解析。",
+    )
     parser.add_argument("--model-dir", default=None,
                         help=f"OpenVINO 模型目录（默认：{DEFAULT_MODEL_DIR}）")
     parser.add_argument("--device", default="GPU", choices=["GPU", "CPU"],
@@ -362,6 +383,26 @@ def main() -> int:
     print(f"[分析] 模型：{model_dir}")
     print(f"[分析] 设备：{args.device}")
     print(f"[分析] 段时长：{args.seg_duration}s，每段 {args.frames_per_seg} 帧，缩放 {args.scale}")
+
+    prompt = args.prompt
+    if args.theme and args.theme.strip():
+        if args.prompt == DEFAULT_PROMPT:
+            prompt = build_theme_aware_prompt(args.theme.strip())
+            print(f"[分析] 已启用主题感知提示词，主题：{args.theme.strip()!r}")
+        else:
+            prompt = (
+                f"剪辑主题为「{args.theme.strip()}」。\n"
+                "输出时第1行必须为下列之一（便于后续自动选片）：\n"
+                "【主题判定】符合 或 【主题判定】不符合 或 【主题判定】部分符合\n"
+                "第2行起再按下列要求分析：\n"
+                f"{args.prompt}"
+            )
+            print(f"[分析] 已在自定义提示前附加主题判定格式，主题：{args.theme.strip()!r}")
+
+    max_tokens = args.max_tokens
+    if args.theme and args.theme.strip():
+        max_tokens = max(max_tokens, 160)
+
     print()
 
     # 初始化 VLM
@@ -376,11 +417,11 @@ def main() -> int:
         result = process_video(
             video_path=video_path,
             pipeline=pipeline,
-            prompt=args.prompt,
+            prompt=prompt,
             seg_duration=args.seg_duration,
             frames_per_seg=args.frames_per_seg,
             scale=args.scale,
-            max_tokens=args.max_tokens,
+            max_tokens=max_tokens,
             ffprobe_path=ffprobe_path,
         )
         results.append(result)

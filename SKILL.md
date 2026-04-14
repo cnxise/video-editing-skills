@@ -48,8 +48,9 @@ powershell -ExecutionPolicy Bypass -File "<SKILL_DIR>\scripts\check_platform.ps1
 # 阶段 1: 准备工作区
 python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --user-request "<USER_REQUEST>"
 
-# 阶段 2: 视频分析
-"<VENV_PYTHON>" "<SKILL_DIR>\scripts\analyze_video.py" --video-dir "<VIDEO_DIR>" --output "<WORKSPACE_DIR>\output_vlm.json" --model-dir "<SKILL_DIR>\models\Qwen2.5-VL-7B-Instruct-int4" --prompt "<PROMPT>"
+# 阶段 2: 视频分析（--theme 与阶段 2.5 一致；不传 --prompt 时使用内置「主题判定+画面」模板）
+"<VENV_PYTHON>" "<SKILL_DIR>\scripts\analyze_video.py" --video-dir "<VIDEO_DIR>" --output "<WORKSPACE_DIR>\output_vlm.json" --model-dir "<SKILL_DIR>\models\Qwen2.5-VL-7B-Instruct-int4" --theme "<THEME>"
+# 可选：追加 --prompt "自定义分析要求…"（与默认提示词不同时，会在自定义内容前附加同样的首行判定格式）
 
 # 阶段 2.5: 片段预选（必须执行）
 "<VENV_PYTHON>" "<SKILL_DIR>\scripts\select_clips.py" --output-vlm "<WORKSPACE_DIR>\output_vlm.json" --theme "<THEME>" --output "<WORKSPACE_DIR>\candidate_clips.json"
@@ -200,7 +201,7 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 ### 步骤 2.2 运行分析
 
 ```bash
-"<VENV_PYTHON>" "<SKILL_DIR>\scripts\analyze_video.py" --video-dir "<VIDEO_DIR>" --output "<WORKSPACE_DIR>\output_vlm.json" --model-dir "<SKILL_DIR>\models\Qwen2.5-VL-7B-Instruct-int4" --prompt "<PROMPT>"
+"<VENV_PYTHON>" "<SKILL_DIR>\scripts\analyze_video.py" --video-dir "<VIDEO_DIR>" --output "<WORKSPACE_DIR>\output_vlm.json" --model-dir "<SKILL_DIR>\models\Qwen2.5-VL-7B-Instruct-int4" --theme "<THEME>"
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -208,16 +209,26 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 | `--device` | `GPU` | GPU 失败时可回退 `CPU` |
 | `--seg-duration` | `3.0` | 段时长（秒） |
 | `--frames-per-seg` | `8` | 每段提取帧数 |
+| `--theme` | 无 | **强烈建议传入**，与阶段 2.5 `--theme` 一致；触发「首行主题判定」输出，便于 `select_clips.py` 解析 |
+| `--prompt` | 见下 | 不传或与脚本内置默认相同时，在提供 `--theme` 下使用**主题感知模板**（首行判定 + 画面描述） |
 
-**默认提示词：**
+**无 `--theme` 时的默认提示词（仅画面描述）：**
 ```
 准确的描述这个视频片段中的主要内容，包括：场景环境、人物动作、画面构图、光线氛围、运镜方式。输出不超过100字的简要描述。
 ```
 
-**需求驱动提示词模板**（用户指定了任何 theme/mood/pacing/must_capture 时）：
+**有 `--theme` 时的输出约定（写入 `seg_desc`，供选片）：**
+
+1. 第 1 行：`【主题判定】符合` / `【主题判定】不符合` / `【主题判定】部分符合`（三选一原文）
+2. 第 2 行起：按默认画面描述要求输出（场景环境、人物动作、画面构图、光线氛围、运镜方式，不超过100字）
+
+**需求驱动自定义 `--prompt`**（用户指定了 mood/pacing/must_capture 等需额外强调时）：仍建议保留 `--theme`；将 `--prompt` 设为例如：
+
 ```
-请根据以下剪辑目标分析视频片段：主题是「<THEME>」，氛围是「<MOOD>」，节奏要求「<PACING>」。重点捕捉与「<MUST_CAPTURE>」相关的画面线索。描述中必须包含：场景环境、人物动作、画面构图、光线氛围、运镜方式，并突出与目标风格相关的信息。输出不超过100字。
+请根据以下剪辑目标补充分析：氛围是「<MOOD>」，节奏要求「<PACING>」。重点捕捉与「<MUST_CAPTURE>」相关的画面线索；在遵守首行【主题判定】格式前提下，画面描述须突出与目标风格相关的信息，并包含场景环境、人物动作、画面构图、光线氛围、运镜方式，输出不超过100字。
 ```
+
+（脚本会在自定义 `--prompt` 前自动附加「主题 + 首行判定格式」说明。）
 
 ### 步骤 2.3 验证输出
 
@@ -263,7 +274,7 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 ### 脚本执行逻辑
 
 1. 从 `--theme` 生成整词 + 2-字 bigram 关键词列表
-2. 逐片段评分（句子级别检测否定词；≥3 字关键词权重 ×2）
+2. 逐片段评分：若 `seg_desc` 含 `【主题判定】符合/部分符合/不符合`，**优先采用该判定**（符合保底分、不符合强制 0 分、部分符合中间档），否则仅用句子级关键词与否定词匹配
 3. 视频总分 = 所有片段得分之和；按总分降序排列
 4. 选出全部 `video_score > 0` 的视频；不足 `--min-videos` 时用片段最丰富的剩余视频补充
 5. 两轮选片：第 1 轮每视频取最高分 1 段（广覆盖），第 2 轮再取第 2 段

@@ -5,7 +5,7 @@ select_clips.py — 主题感知片段预选器（video-editing-skills 工作流
 从 output_vlm.json 中智能筛选片段，生成供 SKILL step 3.6 使用的候选片段池。
 
 处理流程：
-  Step 1: 解析 output_vlm.json，按主题对每个视频/片段进行相关性评分
+  Step 1: 解析 output_vlm.json，按主题对每个视频/片段评分（优先解析 seg_desc 首行【主题判定】）
   Step 2: 选出全部 video_score > 0 的主题相关视频（越多越好）；
           若相关视频数不足 --min-videos（默认 6），从剩余视频中按片段数补充至 min_videos
   Step 3: 两轮选片（每个视频最多 --max-per-video 段，默认 2）
@@ -151,6 +151,46 @@ def score_text(text: str, keywords: List[str]) -> float:
     return max(0.0, raw_score)
 
 
+# 与 analyze_video.py 中 build_theme_aware_prompt 约定的首行格式一致
+_THEME_VERDICT_HEAD_RE = re.compile(r"【主题判定】[：:\s]*(不符合|部分符合|符合)")
+
+
+def parse_leading_theme_verdict(text: str) -> Optional[str]:
+    """
+    解析 seg_desc 开头的【主题判定】行（由 VLM 主题感知提示生成）。
+
+    Returns:
+        "match" | "partial" | "mismatch" | None（无标记时保持纯关键词打分，兼容旧数据）
+    """
+    if not text:
+        return None
+    head = text.lstrip()[:240]
+    m = _THEME_VERDICT_HEAD_RE.search(head)
+    if not m:
+        return None
+    label = m.group(1)
+    if label == "符合":
+        return "match"
+    if label == "不符合":
+        return "mismatch"
+    return "partial"
+
+
+def score_segment(desc: str, keywords: List[str]) -> float:
+    """
+    片段主题分：优先采纳 VLM 首行【主题判定】，否则退回 score_text 关键词打分。
+    """
+    base = score_text(desc, keywords)
+    verdict = parse_leading_theme_verdict(desc)
+    if verdict == "mismatch":
+        return 0.0
+    if verdict == "match":
+        return max(base, 3.0)
+    if verdict == "partial":
+        return max(base, 1.5)
+    return base
+
+
 # ──────────────────────────────────────────────
 # 路径归一化（与 storyboard_guard.py 保持一致）
 # ──────────────────────────────────────────────
@@ -248,7 +288,7 @@ def select_and_scatter(
     """
     核心选片逻辑，返回 (scattered_clips, metadata_summary)。
 
-    1. 对每个视频的每个片段用主题关键词打分
+    1. 对每个视频的每个片段打分（若 seg_desc 含【主题判定】则优先采用，否则关键词打分）
     2. 视频总分 = 所有片段分数之和
     3. 选出全部 video_score > 0 的视频（主题相关，越多越好）；
        若相关视频数 < min_videos，从剩余视频中按片段数补充
@@ -280,7 +320,7 @@ def select_and_scatter(
                         "seg_end": seg_end,
                         "duration": dur,
                         "seg_desc": desc,
-                        "theme_score": score_text(desc, keywords),
+                        "theme_score": score_segment(desc, keywords),
                     }
                 )
             except (KeyError, ValueError, TypeError):
