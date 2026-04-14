@@ -52,8 +52,24 @@ def try_parse_resolution(value: object) -> Optional[Tuple[int, int]]:
         return None
 
 
-def get_video_dimensions(ffprobe: str, video_path: Path) -> Optional[Tuple[int, int]]:
-    """使用 ffprobe 获取视频的 (width, height)，失败时返回 None。"""
+def _normalize_right_angle_rotation(value: object) -> Optional[int]:
+    """将 rotation 归一化到 0/90/180/270；非直角值返回 None。"""
+    try:
+        deg = float(value)
+    except (TypeError, ValueError):
+        return None
+    normalized = int(round(deg)) % 360
+    # 仅接受接近 90 的倍数（避免异常元数据）
+    if normalized in (0, 90, 180, 270):
+        return normalized
+    return None
+
+
+def _probe_video_stream_info(
+    ffprobe: str,
+    video_path: Path,
+) -> Optional[Tuple[int, int, int]]:
+    """返回 (width, height, rotation_deg)。rotation_deg 已归一化到 0/90/180/270。"""
     cmd = [
         ffprobe,
         "-v",
@@ -61,21 +77,62 @@ def get_video_dimensions(ffprobe: str, video_path: Path) -> Optional[Tuple[int, 
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width,height",
+        "stream=width,height:stream_tags=rotate:stream_side_data=rotation",
         "-of",
-        "csv=p=0",
+        "json",
         str(video_path),
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0 and result.stdout.strip():
-            line = result.stdout.strip().split("\n")[0]
-            parts = line.split(",")
-            if len(parts) >= 2:
-                return int(parts[0]), int(parts[1])
     except Exception:
-        pass
-    return None
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    streams = data.get("streams") or []
+    if not streams:
+        return None
+    stream0 = streams[0]
+    try:
+        width = int(stream0.get("width"))
+        height = int(stream0.get("height"))
+    except (TypeError, ValueError):
+        return None
+
+    rotation: Optional[int] = None
+    side_data_list = stream0.get("side_data_list") or []
+    for side_data in side_data_list:
+        rotation = _normalize_right_angle_rotation((side_data or {}).get("rotation"))
+        if rotation is not None:
+            break
+    if rotation is None:
+        tags = stream0.get("tags") or {}
+        rotation = _normalize_right_angle_rotation(tags.get("rotate"))
+    if rotation is None:
+        rotation = 0
+    return width, height, rotation
+
+
+def get_video_rotation_degrees(ffprobe: str, video_path: Path) -> Optional[int]:
+    """读取视频显示旋转角（0/90/180/270）；失败返回 None。"""
+    info = _probe_video_stream_info(ffprobe, video_path)
+    if not info:
+        return None
+    return info[2]
+
+
+def get_video_dimensions(ffprobe: str, video_path: Path) -> Optional[Tuple[int, int]]:
+    """获取显示方向宽高（考虑 rotation 元数据）；失败返回 None。"""
+    info = _probe_video_stream_info(ffprobe, video_path)
+    if not info:
+        return None
+    width, height, rotation = info
+    if rotation in (90, 270):
+        return height, width
+    return width, height
 
 
 def infer_compose_target_resolution_from_dims(

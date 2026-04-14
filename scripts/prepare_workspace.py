@@ -29,6 +29,7 @@ from pathlib import Path
 from bootstrap import bootstrap_environment
 from skill_runtime import (
     get_video_dimensions,
+    get_video_rotation_degrees,
     probe_compose_target_resolution_from_video_paths,
     write_runtime_manifest,
 )
@@ -126,6 +127,8 @@ def main() -> int:
     # 5. 探测视频目录画幅多数，供合成阶段读取 runtime_env.json
     ffprobe = str(runtime["ffprobe"])
     source_dims = [get_video_dimensions(ffprobe, v) for v in videos]
+    rotations = [get_video_rotation_degrees(ffprobe, v) for v in videos]
+    rotated_n = sum(1 for r in rotations if r in (90, 270))
     portrait_n = sum(1 for d in source_dims if d and d[1] > d[0])
     landscape_n = sum(1 for d in source_dims if d and d[0] >= d[1])
     total_ok = portrait_n + landscape_n
@@ -144,6 +147,11 @@ def main() -> int:
     else:
         print(
             f"[准备] 警告：未能探测任一视频分辨率，默认横屏画布 {res_str}（与 compose 兜底一致）"
+        )
+    if rotated_n > 0:
+        print(
+            f"[准备] 检测到 {rotated_n} 个视频含旋转元数据（90/270）；"
+            "横竖统计已按显示方向矫正。"
         )
 
     # 6. 写入运行时清单
