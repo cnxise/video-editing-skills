@@ -961,7 +961,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--font-size",
         type=int,
-        default=50,
+        default=55,
         help="Subtitle font size",
     )
     parser.add_argument(
