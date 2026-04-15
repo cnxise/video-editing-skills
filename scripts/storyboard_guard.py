@@ -435,6 +435,144 @@ def validate_storyboard(
     return errors
 
 
+def build_replacement_suggestions(
+    storyboard: dict,
+    cfg: RuleConfig,
+    candidate_data: Optional[dict] = None,
+) -> Optional[dict]:
+    """
+    在 validate 模式下输出“建议替换”信息（仅建议，不修改 storyboard）：
+    - 仅针对 candidate 广度优先覆盖缺失场景
+    - 建议补入 missing source，并给出可替换的当前来源与推荐 seg_id
+    """
+    if candidate_data is None:
+        return None
+
+    clips = get_clips(storyboard)
+    if not clips:
+        return None
+
+    round1, round2 = build_candidate_rounds(candidate_data)
+    if not (round1 or round2):
+        return None
+
+    planned_sources = round1 + round2
+    expected_unique = min(len(clips), len(planned_sources))
+    first_pick = min(expected_unique, len(round1))
+    second_pick = max(0, expected_unique - first_pick)
+    must_cover = round1[:first_pick] + round2[:second_pick]
+
+    unique_videos = {
+        normalize_media_path(str(c.get("source_video", "")))
+        for c in clips
+        if str(c.get("source_video", "")).strip()
+    }
+    missing_sources = [s for s in must_cover if s and s not in unique_videos]
+    if not missing_sources:
+        return None
+
+    per_video = Counter(
+        normalize_media_path(str(c.get("source_video", ""))) for c in clips
+    )
+    score_map = build_candidate_video_score_map(candidate_data)
+    used_pairs = {clip_key(c) for c in clips}
+    candidate_pool = candidate_data.get("candidate_clips", []) or []
+
+    # 当前 storyboard 中不属于本轮 must_cover 的来源，是优先替换对象。
+    swap_out_candidates = [s for s in unique_videos if s and s not in set(must_cover)]
+    swap_out_candidates.sort(
+        key=lambda s: (
+            float(score_map.get(s, 0.0)),   # 低分优先替换
+            -int(per_video.get(s, 0)),      # 使用更多片段的来源优先替换
+            Path(s).name.lower(),
+        )
+    )
+
+    eff_min = effective_min_clip_duration(cfg)
+    verdict_rank = {
+        "match": 0,
+        "partial": 1,
+        "unknown": 2,
+        "mismatch": 3,
+    }
+    suggested_swaps: List[dict] = []
+    for idx, missing_src in enumerate(missing_sources):
+        recommended_seg_id: Optional[int] = None
+        recommended_verdict = "unknown"
+        recommended_duration: Optional[float] = None
+        recommendation_risk: Optional[str] = None
+        valid_options: List[Tuple[int, float, int, str]] = []
+        for item in candidate_pool:
+            src = normalize_media_path(str(item.get("source_video", "")))
+            if src != missing_src:
+                continue
+            try:
+                seg_id = int(item.get("source_segment_id", -1))
+            except (TypeError, ValueError):
+                seg_id = -1
+            tc = item.get("timecode") or {}
+            try:
+                in_point = float(tc.get("in_point", 0.0))
+                out_point = float(tc.get("out_point", 0.0))
+            except (TypeError, ValueError):
+                in_point, out_point = 0.0, 0.0
+            dur = out_point - in_point
+            if seg_id < 0 or dur < eff_min:
+                continue
+            if (missing_src, seg_id) in used_pairs:
+                continue
+            verdict = _parse_theme_verdict(str(item.get("seg_desc", "")))
+            valid_options.append(
+                (
+                    int(verdict_rank.get(verdict, 2)),
+                    -float(dur),  # 同等主题优先更长片段
+                    int(seg_id),
+                    str(verdict),
+                )
+            )
+
+        if valid_options:
+            valid_options.sort()
+            _, neg_dur, chosen_seg_id, chosen_verdict = valid_options[0]
+            recommended_seg_id = int(chosen_seg_id)
+            recommended_verdict = str(chosen_verdict)
+            recommended_duration = round(-float(neg_dur), 3)
+            used_pairs.add((missing_src, recommended_seg_id))
+            if recommended_verdict not in {"match", "partial"}:
+                recommendation_risk = (
+                    "主题风险：当前仅找到时长达标但非“符合/部分符合”的候选片段"
+                )
+        else:
+            recommendation_risk = (
+                f"替换风险：未找到满足最小时长(有效下限 {eff_min}s)且未被占用的候选片段"
+            )
+
+        replace_src = swap_out_candidates[idx] if idx < len(swap_out_candidates) else None
+        suggested_swaps.append(
+            {
+                "missing_source_video": missing_src,
+                "missing_source_video_name": Path(missing_src).name,
+                "replace_source_video": replace_src,
+                "replace_source_video_name": Path(replace_src).name if replace_src else None,
+                "recommended_source_segment_id": recommended_seg_id,
+                "recommended_theme_verdict": recommended_verdict,
+                "recommended_duration_seconds": recommended_duration,
+                "recommendation_risk": recommendation_risk,
+            }
+        )
+
+    return {
+        "rule": "candidate_breadth_first_coverage",
+        "expected_match_round_pick_count": first_pick,
+        "expected_partial_round_pick_count": second_pick,
+        "missing_source_videos": missing_sources,
+        "missing_source_video_names": [Path(s).name for s in missing_sources],
+        "swap_out_candidates": swap_out_candidates,
+        "swap_out_candidate_names": [Path(s).name for s in swap_out_candidates],
+        "suggested_swaps": suggested_swaps,
+    }
+
+
 def _set_clip_from_segment(clip: dict, src: str, seg: dict) -> None:
     clip["source_video"] = normalize_media_path(src)
     clip["source_segment_id"] = int(seg["seg_id"])
@@ -854,6 +992,9 @@ def main() -> int:
 
     report = build_report(storyboard, cfg)
     report["validation_errors"] = errors
+    suggestions = build_replacement_suggestions(storyboard, cfg, candidate_data=candidate_data)
+    if suggestions:
+        report["replacement_suggestions"] = suggestions
 
     if args.report_json:
         write_json(Path(args.report_json), report)
