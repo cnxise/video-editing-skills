@@ -360,15 +360,16 @@ def validate_storyboard(
         if cur_src and cur_src == nxt_src:
             errors.append(f"clip#{i+1} 与 clip#{i+2}: 相邻片段来自同一 source_video")
 
-    # 规则：覆盖至少 min_unique_videos
+    # 规则：覆盖至少 min_unique_videos（上限为 len(clips)，避免 paired 等少片段模式误报）
     unique_videos = {
         normalize_media_path(str(c.get("source_video", "")))
         for c in clips
         if str(c.get("source_video", "")).strip()
     }
-    if len(unique_videos) < cfg.min_unique_videos:
+    effective_min_unique = min(cfg.min_unique_videos, len(clips))
+    if len(unique_videos) < effective_min_unique:
         errors.append(
-            f"source_video 覆盖不足: 当前 {len(unique_videos)}，要求至少 {cfg.min_unique_videos}"
+            f"source_video 覆盖不足: 当前 {len(unique_videos)}，要求至少 {effective_min_unique}"
         )
 
     actual_duration = effective_story_duration(clips, cfg.default_transition_duration)
@@ -696,14 +697,15 @@ def autofix_storyboard(
     # - 若时长已满足：不再为了覆盖率主动引入新来源；仅在 unique_videos 低于 min_unique_videos 时，
     #   退回到“补足最少视频数”的基础规则
     current_unique_count = len(unique_used)
+    effective_min_unique = min(cfg.min_unique_videos, len(clips))
     if candidate_data and not duration_satisfied:
         round1, round2 = build_candidate_rounds(candidate_data)
         need_cover = min(len(clips), len(round1) + len(round2))
         first_pick = min(need_cover, len(round1))
         second_pick = max(0, need_cover - first_pick)
         target_sources = round1[:first_pick] + round2[:second_pick]
-    elif current_unique_count < cfg.min_unique_videos:
-        target_sources = all_sources[: cfg.min_unique_videos]
+    elif current_unique_count < effective_min_unique:
+        target_sources = all_sources[:effective_min_unique]
     else:
         target_sources = []
 

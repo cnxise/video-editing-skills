@@ -603,10 +603,12 @@ def render_subtitle(
     使用 input-side seek（-ss 在 -i 之前）配合 re-encode，ffmpeg 的 accurate_seek
     会从关键帧解码但只编码 in_point 之后的帧，彻底避免 copy 模式的 pre-roll 问题。
     """
-    subtitle_text = wrap_text(subtitle_text, max_line_len)
-    subtitle_lines = subtitle_text.split("\n") if subtitle_text else []
-    if not subtitle_lines:
-        subtitle_lines = [""]
+    # 支持用 | 分隔多句字幕，每句均分片段时长分段显示
+    subtitle_parts = [p.strip() for p in subtitle_text.split("|") if p.strip()]
+    if not subtitle_parts:
+        subtitle_parts = [""]
+    n_parts = len(subtitle_parts)
+    part_dur = clip_duration / n_parts
 
     if target_resolution and src_dims:
         tgt_w, tgt_h = target_resolution
@@ -619,29 +621,38 @@ def render_subtitle(
         sub_y_base_expr = "h*0.85"
 
     line_step = max(1, int(font_size * 1.2))
-    line_count = len(subtitle_lines)
     drawtext_filters: List[str] = []
-    for idx, line in enumerate(subtitle_lines):
-        escaped_line = escape_drawtext_text(line)
-        filter_parts = []
-        if font_file:
-            font_value = escape_drawtext_path(str(font_file))
-            filter_parts.append(f"fontfile={font_value}")
-        filter_parts.extend(
-            [
-                f"text='{escaped_line}'",
-                f"x={sub_x_expr}",
-                (
-                    "y="
-                    f"({sub_y_base_expr})-(({line_count - 1})*{line_step}/2)+({idx}*{line_step})"
-                ),
-                f"fontsize={font_size}",
-                "fontcolor=white",
-                "box=1",
-                "boxcolor=black@0.5",
-            ]
-        )
-        drawtext_filters.append("drawtext=" + ":".join(filter_parts))
+    for part_idx, part_text in enumerate(subtitle_parts):
+        t_start = part_idx * part_dur
+        t_end = (part_idx + 1) * part_dur
+        enable_expr = f"between(t,{t_start:.3f},{t_end:.3f})"
+
+        wrapped = wrap_text(part_text, max_line_len)
+        part_lines = wrapped.split("\n") if wrapped else [""]
+        line_count = len(part_lines)
+
+        for idx, line in enumerate(part_lines):
+            escaped_line = escape_drawtext_text(line)
+            filter_parts = []
+            if font_file:
+                font_value = escape_drawtext_path(str(font_file))
+                filter_parts.append(f"fontfile={font_value}")
+            filter_parts.extend(
+                [
+                    f"text='{escaped_line}'",
+                    f"x={sub_x_expr}",
+                    (
+                        "y="
+                        f"({sub_y_base_expr})-(({line_count - 1})*{line_step}/2)+({idx}*{line_step})"
+                    ),
+                    f"fontsize={font_size}",
+                    "fontcolor=white",
+                    "box=1",
+                    "boxcolor=black@0.5",
+                    f"enable='{enable_expr}'",
+                ]
+            )
+            drawtext_filters.append("drawtext=" + ":".join(filter_parts))
 
     if target_resolution:
         w, h = target_resolution

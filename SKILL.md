@@ -52,8 +52,8 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 "<VENV_PYTHON>" "<SKILL_DIR>\scripts\analyze_video.py" --video-dir "<VIDEO_DIR>" --output "<WORKSPACE_DIR>\output_vlm.json" --model-dir "<SKILL_DIR>\models\Qwen2.5-VL-7B-Instruct-int4" --theme "<THEME>"
 # 可选：追加 --prompt "自定义分析要求…"（与默认提示词不同时，会在自定义内容前附加同样的首行判定格式）
 
-# 阶段 2.5: 片段预选（必须执行）
-"<VENV_PYTHON>" "<SKILL_DIR>\scripts\select_clips.py" --output-vlm "<WORKSPACE_DIR>\output_vlm.json" --theme "<THEME>" --output "<WORKSPACE_DIR>\candidate_clips.json"
+# 阶段 2.5: 片段预选（必须执行；N_SEGS/MIN_VIDEOS 由阶段 2.5 参数推导公式计算）
+"<VENV_PYTHON>" "<SKILL_DIR>\scripts\select_clips.py" --output-vlm "<WORKSPACE_DIR>\output_vlm.json" --theme "<THEME>" --output "<WORKSPACE_DIR>\candidate_clips.json" --min-videos <MIN_VIDEOS> --n-segs <N_SEGS>
 
 # 阶段 3: AI 生成 storyboard.json → 写入后立即执行 Guard 校验（见全局规范）
 
@@ -79,23 +79,23 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 |------|------|
 | C1 | `(source_video, source_segment_id)` 组合全局唯一，不可重复 |
 | C2 | 若存在 `candidate_clips.json`：先保证每个已入选 `source_video` 至少使用 1 段（受总片段数上限约束）；若总片段数不足以覆盖全部已入选视频，按 `video_score` 从高到低优先覆盖 |
-| C3 | 同一 `source_video` 最多使用 3 段（storyboard_guard 默认阈值） |
+| C3 | 同一 `source_video` 最多使用 1 段 |
 | C4 | 相邻两个 clip 不得来自同一 `source_video` |
-| C5 | `in_point` = 对应 `seg_start`，`out_point` = `seg_end`，`duration = out_point − in_point > 0` |
-| C6 | `source_segment_id` 必须是 output_vlm.json 对应视频的有效 `seg_id` |
+| C5 | `in_point` = 起始段 `seg_start`，`out_point` = 末段 `seg_end`，`duration = out_point − in_point > 0`；一个 clip 覆盖 N_SEGS 个连续段（约 N_SEGS×3s，由阶段 2.5 推导） |
+| C6 | `source_segment_id` 必须是 output_vlm.json 对应视频的有效 `seg_id`（指起始段） |
 | C7 | `source_video` 必须是 `<VIDEO_DIR>` 中实际存在的文件 |
-| C8 | 单片段时长：最短 ≥ 1.5s，最长 ≤ 目标时长的 25% |
+| C8 | 单片段时长：最短 ≥ 5s，最长 ≤ 目标时长的 30% |
 | C9 | 若存在 `candidate_clips.json`，`storyboard.json` 的每个 `(source_video, source_segment_id)` 必须来自 `candidate_clips`，禁止引入候选池外片段 |
 
 **实际输出时长公式：** `sum(clip.duration) − sum(有转场片段的 transition.duration)`
-例：14 个 3s 片段 + 13 个 0.8s 转场 → 42 − 10.4 = 31.6s ≈ 30s
+例（60s 目标，N_SEGS=3）：7 个 9s 片段 + 6 个 0.8s 转场 → 63 − 4.8 = 58.2s ≈ 60s
 
 ### 字幕约束（S1–S5）
 
 | 编号 | 规则 |
 |------|------|
 | S1 | 每个片段必须有字幕，`voiceover.text` 不可为空 |
-| S2 | 每条 ≤ 15 字（中文），第一人称 |
+| S2 | 单句 ≤ 16 字（中文），第一人称；每个 clip 应写 **N_SEGS 句**，用 `\|` 分隔（如 6s 写两句 `"今天终于骑上了车\|引擎声代替了闹钟"`，9s 写三句 `"A\|B\|C"`，12s 写四句 `"A\|B\|C\|D"`），每句在对应 3s 时间窗内显示，每句各 ≤ 16 字 |
 | S3 | 字幕说**感受和想法**，不描述观众能直接看到的画面内容 |
 | S4 | 所有字幕连续读必须是**有头有尾、有情感弧线的完整叙事**，不是散句 |
 | S5 | **叙事先行**：先写完整字幕文案，再为每句选画面 |
@@ -105,7 +105,8 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 写入 `storyboard.json` 后**必须立即执行**：
 
 ```bash
-"<VENV_PYTHON>" "<SKILL_DIR>\scripts\storyboard_guard.py" --storyboard "<WORKSPACE_DIR>\storyboard.json" --output-vlm "<WORKSPACE_DIR>\output_vlm.json" --candidate-clips "<WORKSPACE_DIR>\candidate_clips.json" --mode validate
+"<VENV_PYTHON>" "<SKILL_DIR>\scripts\storyboard_guard.py" --storyboard "<WORKSPACE_DIR>\storyboard.json" --output-vlm "<WORKSPACE_DIR>\output_vlm.json" --candidate-clips "<WORKSPACE_DIR>\candidate_clips.json" --mode validate --per-video-max 1 --min-clip-duration 5.0 --min-unique-videos <MIN_VIDEOS>
+# <MIN_VIDEOS> 使用阶段 2.5 推导的值
 ```
 
 | 退出码 | 动作 |
@@ -253,6 +254,31 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 
 > **目的：** 在 AI 创作前，用脚本把全量素材压缩为与主题最相关的候选池，减轻阶段 3 负担。
 
+### 参数自动推导（执行前必须计算）
+
+在调用 `select_clips.py` 之前，**根据 `target_duration_seconds` 计算所需片段数和候选视频数**：
+
+```
+trans_dur  = 0.8       # 默认转场时长（秒）
+seg_dur    = 3.0       # 每个分析段的时长（秒，与 analyze_video.py --seg-duration 一致）
+
+# 根据目标时长自动推导每 clip 的段数（时长越长，每段越宽）
+N_SEGS     = max(2, round((target_duration / 8 + 0.8) / seg_dur))
+clip_dur   = N_SEGS * seg_dur                  # 每个 clip 的实际时长（秒）
+N_CLIPS    = ceil(target_duration / (clip_dur - trans_dur))
+MIN_VIDEOS = max(6, N_CLIPS)                   # 每个视频贡献 1 个 clip
+```
+
+| 目标时长 | N_SEGS | clip_dur | N_CLIPS | MIN_VIDEOS |
+|---------|--------|----------|---------|-----------|
+| 30s     | 2      | 6s       | 6       | 6         |
+| 45s     | 2      | 6s       | 9       | 9         |
+| 60s     | 3      | 9s       | 7       | 7         |
+| 90s     | 4      | 12s      | 8       | 8         |
+
+> **注：** 若可用视频数量不足 MIN_VIDEOS，select_clips.py 会自动从非主题视频补充至该数量。
+> 将推导出的 `N_SEGS` / `N_CLIPS` / `MIN_VIDEOS` 保存，阶段 3 和 Guard 校验时复用。
+
 ### 运行 select_clips.py
 
 ```bash
@@ -260,17 +286,16 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
     --output-vlm  "<WORKSPACE_DIR>\output_vlm.json" \
     --theme       "<THEME>" \
     --output      "<WORKSPACE_DIR>\candidate_clips.json" \
-    [--min-videos 6] \
-    [--max-per-video 2] \
-    [--min-clip-duration 1.5] \
+    --min-videos  <MIN_VIDEOS> \
+    --n-segs      <N_SEGS> \
     [--extra-keywords "灯笼,烟花,喜庆"]
 ```
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--min-videos` | `6` | 主题相关不足时从非相关视频补充至此数量 |
-| `--max-per-video` | `2` | 每视频最多保留几个片段 |
-| `--min-clip-duration` | `1.5` | 片段最短时长阈值（秒） |
+| `--min-videos` | `6` | 主题相关不足时从非相关视频补充至此数量（使用推导值） |
+| `--n-segs` | `2` | 每个候选 clip 覆盖的连续段数（使用推导值；2≈6s，3≈9s，4≈12s） |
+| `--min-clip-duration` | `1.5` | 单段最短时长阈值（秒）；配对后 clip 约 n_segs×3s，无需在此提高 |
 | `--extra-keywords` | 空 | 额外主题关键词，逗号分隔 |
 
 ### 脚本执行逻辑
@@ -299,7 +324,8 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
     "timecode": { "in_point": 0.0, "out_point": 3.0, "duration": 3.0 },
     "seg_desc": "...",
     "theme_score": 4.0,
-    "video_rank": 1
+    "video_rank": 1,
+    "paired_with_segment_id": 1  // paired 模式下额外字段：结束段 seg_id（source_segment_id 为起始段）
   }]
 }
 ```
@@ -354,15 +380,17 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 
 #### 3.2.1 规划叙事节拍
 
-片段数 ≈ `target / (seg_duration − transition_duration)` = `30 / (3 − 0.8)` ≈ **14 个片段**
+**直接使用阶段 2.5 推导的 `N_CLIPS`，不要重新硬编码。**
 
-| 节拍 | 片段数（30s≈14片） | 情感曲线 | 字幕功能 |
-|------|-------------------|---------|---------|
-| **开篇点题** | 2-3 | 好奇/期待 | 抛出主题，制造悬念 |
-| **铺陈展开** | 3-4 | 渐入 | 展开体验 |
-| **情感递进** | 4-5 | 升温 | 层层深入 |
-| **高潮时刻** | 2-3 | 最强 | 最有力量的一句话 |
-| **余韵收尾** | 1-2 | 回落/升华 | 总结点睛，呼应开篇 |
+片段数 = `ceil(target / (6.0 − transition_duration))`，例：`ceil(30/5.2)` = **6**，`ceil(60/5.2)` = **12**，每片段约 6s，来自不同视频，相邻片段均加转场
+
+| 节拍 | 占比（参考 N_CLIPS） | 情感曲线 | 字幕功能 |
+|------|---------------------|---------|---------|
+| **开篇点题** | ~15%（≥2片） | 好奇/期待 | 抛出主题，制造悬念 |
+| **铺陈展开** | ~25% | 渐入 | 展开体验 |
+| **情感递进** | ~35% | 升温 | 层层深入 |
+| **高潮时刻** | ~15% | 最强 | 最有力量的一句话 |
+| **余韵收尾** | ~10%（≥1片） | 回落/升华 | 总结点睛，呼应开篇 |
 
 #### 3.2.2 一气呵成写出全部字幕
 
