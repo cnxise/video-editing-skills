@@ -374,8 +374,8 @@ def validate_storyboard(
 
     actual_duration = effective_story_duration(clips, cfg.default_transition_duration)
 
-    # 规则：若提供 candidate_clips.json，广度覆盖始终第一优先级。
-    # 只要还能先覆盖更多高优先级不同视频，就不允许提前重复来源；与是否已满足目标时长无关。
+    # 规则：若提供 candidate_clips.json，需要覆盖足够数量的“符合(match)”来源视频。
+    # 不再强制 top-N 顺序，只要求达到 N 个主题符合来源即可。
     if candidate_data is not None:
         # 硬规则：storyboard 只能使用 candidate_clips 中出现过的片段
         allowed_pairs = build_candidate_pair_set(candidate_data)
@@ -390,18 +390,17 @@ def validate_storyboard(
 
         round1, round2 = build_candidate_rounds(candidate_data)
         if round1 or round2:
-            planned_sources = round1 + round2
-            expected_unique = min(len(clips), len(planned_sources))
-            first_pick = min(expected_unique, len(round1))
-            second_pick = max(0, expected_unique - first_pick)
-            must_cover = round1[:first_pick] + round2[:second_pick]
-            missing = [v for v in must_cover if v not in unique_videos]
-            if missing:
-                missing_names = [Path(v).name for v in missing]
+            effective_min_match = min(cfg.min_unique_videos, len(clips), len(round1))
+            used_match_sources = [v for v in unique_videos if v in set(round1)]
+            if len(used_match_sources) < effective_min_match:
+                missing_count = effective_min_match - len(used_match_sources)
+                candidate_missing = [v for v in round1 if v not in unique_videos][:missing_count]
+                missing_names = [Path(v).name for v in candidate_missing]
                 errors.append(
-                    "未满足 candidate 广度优先覆盖规则: "
-                    f"应先覆盖有“符合”片段的视频（前 {first_pick} 个），"
-                    f"不足再覆盖仅“部分符合”视频（前 {second_pick} 个）；缺失: {missing_names}"
+                    "未满足 candidate 主题覆盖规则: "
+                    f"当前仅覆盖 {len(used_match_sources)} 个“符合(match)”来源，"
+                    f"要求至少 {effective_min_match} 个；"
+                    f"可补充来源: {missing_names}"
                 )
 
     # 规则：同一 source_video 最多 per_video_max_clips 段
@@ -443,8 +442,8 @@ def build_replacement_suggestions(
 ) -> Optional[dict]:
     """
     在 validate 模式下输出“建议替换”信息（仅建议，不修改 storyboard）：
-    - 仅针对 candidate 广度优先覆盖缺失场景
-    - 建议补入 missing source，并给出可替换的当前来源与推荐 seg_id
+    - 仅针对 candidate 主题覆盖不足（match 来源不足）场景
+    - 建议补入缺失 match source，并给出可替换的当前来源与推荐 seg_id
     """
     if candidate_data is None:
         return None
@@ -457,18 +456,17 @@ def build_replacement_suggestions(
     if not (round1 or round2):
         return None
 
-    planned_sources = round1 + round2
-    expected_unique = min(len(clips), len(planned_sources))
-    first_pick = min(expected_unique, len(round1))
-    second_pick = max(0, expected_unique - first_pick)
-    must_cover = round1[:first_pick] + round2[:second_pick]
+    effective_min_match = min(cfg.min_unique_videos, len(clips), len(round1))
 
     unique_videos = {
         normalize_media_path(str(c.get("source_video", "")))
         for c in clips
         if str(c.get("source_video", "")).strip()
     }
-    missing_sources = [s for s in must_cover if s and s not in unique_videos]
+    match_set = set(round1)
+    current_match_sources = [s for s in unique_videos if s in match_set]
+    need_more = max(0, effective_min_match - len(current_match_sources))
+    missing_sources = [s for s in round1 if s and s not in unique_videos][:need_more]
     if not missing_sources:
         return None
 
@@ -479,8 +477,11 @@ def build_replacement_suggestions(
     used_pairs = {clip_key(c) for c in clips}
     candidate_pool = candidate_data.get("candidate_clips", []) or []
 
-    # 当前 storyboard 中不属于本轮 must_cover 的来源，是优先替换对象。
-    swap_out_candidates = [s for s in unique_videos if s and s not in set(must_cover)]
+    # 优先替换非 match 来源；不足时再替换低分 match 来源。
+    swap_out_candidates = [s for s in unique_videos if s and s not in match_set]
+    if len(swap_out_candidates) < len(missing_sources):
+        extra_match_swap = [s for s in unique_videos if s and s in match_set]
+        swap_out_candidates.extend(extra_match_swap)
     swap_out_candidates.sort(
         key=lambda s: (
             float(score_map.get(s, 0.0)),   # 低分优先替换
@@ -563,9 +564,9 @@ def build_replacement_suggestions(
         )
 
     return {
-        "rule": "candidate_breadth_first_coverage",
-        "expected_match_round_pick_count": first_pick,
-        "expected_partial_round_pick_count": second_pick,
+        "rule": "candidate_match_coverage",
+        "expected_match_round_pick_count": effective_min_match,
+        "expected_partial_round_pick_count": 0,
         "missing_source_videos": missing_sources,
         "missing_source_video_names": [Path(s).name for s in missing_sources],
         "swap_out_candidates": swap_out_candidates,
@@ -693,17 +694,17 @@ def autofix_storyboard(
     duration_satisfied = target > 0 and actual_duration >= target
 
     # Step 1: 补齐覆盖
-    # - 若提供 candidate_clips 且时长未满足：按 candidate 两轮覆盖规则补齐
+    # - 若提供 candidate_clips 且时长未满足：按“match 来源数量达标”补齐（不强制 top-N 顺序）
     # - 若时长已满足：不再为了覆盖率主动引入新来源；仅在 unique_videos 低于 min_unique_videos 时，
     #   退回到“补足最少视频数”的基础规则
     current_unique_count = len(unique_used)
     effective_min_unique = min(cfg.min_unique_videos, len(clips))
     if candidate_data and not duration_satisfied:
         round1, round2 = build_candidate_rounds(candidate_data)
-        need_cover = min(len(clips), len(round1) + len(round2))
-        first_pick = min(need_cover, len(round1))
-        second_pick = max(0, need_cover - first_pick)
-        target_sources = round1[:first_pick] + round2[:second_pick]
+        match_set = set(round1)
+        used_match_count = len([s for s in unique_used if s in match_set])
+        need_match = max(0, min(effective_min_unique, len(round1)) - used_match_count)
+        target_sources = [s for s in round1 if s and s not in unique_used][:need_match]
     elif current_unique_count < effective_min_unique:
         target_sources = all_sources[:effective_min_unique]
     else:
