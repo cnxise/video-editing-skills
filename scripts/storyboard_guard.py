@@ -24,6 +24,10 @@ class RuleConfig:
     default_transition_duration: float = 0.8
     subtitle_min_chars: int = 2
     subtitle_max_chars_per_sec: float = 8.0
+    # 字幕分段切换间隔（秒）：要求每个 clip 至少每 interval 切一次字幕
+    subtitle_switch_interval_sec: float = 3.0
+    # 每个字幕分段（| 分隔）的最少字符数，防止把一句话拆成碎片
+    subtitle_min_chars_per_part: int = 5
 
 
 def normalize_media_path(raw: str) -> str:
@@ -342,6 +346,29 @@ def validate_storyboard(
             errors.append(f"clip#{i}: voiceover.text 为空")
         else:
             vo_text = str(vo).strip()
+            subtitle_parts = [p.strip() for p in vo_text.split("|") if p.strip()]
+            required_parts = max(
+                1, int(math.ceil(dur / max(0.1, float(cfg.subtitle_switch_interval_sec))))
+            )
+            if len(subtitle_parts) < required_parts:
+                errors.append(
+                    f"clip#{i}: 字幕分段不足，duration={dur:.3f}s 要求至少 {required_parts} 段"
+                    f"（每 {cfg.subtitle_switch_interval_sec:.1f}s 至少切换一次，用 '|' 分隔），"
+                    f"当前 {len(subtitle_parts)} 段"
+                )
+            # 每段必须是独立完整的句子，禁止把一句话拆成碎片
+            if cfg.subtitle_min_chars_per_part > 0 and len(subtitle_parts) > 1:
+                short_parts = [
+                    (j + 1, p) for j, p in enumerate(subtitle_parts)
+                    if len(p) < cfg.subtitle_min_chars_per_part
+                ]
+                if short_parts:
+                    detail = "、".join(f"第{j}段'{p}'({len(p)}字)" for j, p in short_parts)
+                    errors.append(
+                        f"clip#{i}: 字幕分段疑似句子碎片——{detail}。"
+                        f"每段至少 {cfg.subtitle_min_chars_per_part} 字且必须是独立完整的句子，"
+                        f"禁止把一句话拆成多段（如 '一直想知道|路的尽头|是什么'）"
+                    )
             char_count = len(vo_text)
             if char_count < cfg.subtitle_min_chars:
                 errors.append(
@@ -937,6 +964,18 @@ def parse_args() -> argparse.Namespace:
         default=8.0,
         help="Maximum subtitle chars per second (default: 8.0)",
     )
+    p.add_argument(
+        "--subtitle-switch-interval-sec",
+        type=float,
+        default=3.0,
+        help="Subtitle must switch at least once per this many seconds (default: 3.0)",
+    )
+    p.add_argument(
+        "--subtitle-min-chars-per-part",
+        type=int,
+        default=5,
+        help="Minimum chars per | separated subtitle part to detect sentence fragments (default: 5)",
+    )
     p.add_argument("--check-source-exists", action="store_true")
     return p.parse_args()
 
@@ -982,6 +1021,8 @@ def main() -> int:
         default_transition_duration=args.default_transition_duration,
         subtitle_min_chars=max(0, int(args.subtitle_min_chars)),
         subtitle_max_chars_per_sec=max(0.1, float(args.subtitle_max_chars_per_sec)),
+        subtitle_switch_interval_sec=max(0.1, float(args.subtitle_switch_interval_sec)),
+        subtitle_min_chars_per_part=max(0, int(args.subtitle_min_chars_per_part)),
     )
 
     storyboard = read_json(storyboard_path)

@@ -584,6 +584,28 @@ def add_bgm_to_video(
     ]
     run_cmd(cmd, dry_run=dry_run)
 
+def _build_subtitle_alpha_expr(
+    t_start: float,
+    t_end: float,
+    fade_dur: float,
+) -> str:
+    """构建字幕淡入淡出的 alpha 表达式。
+
+    在 t_start 到 t_start+fade_dur 线性淡入（0→1），
+    在 t_end-fade_dur 到 t_end 线性淡出（1→0），
+    中间保持 1。自动处理片段过短时 fade_dur 被压缩的情况。
+    """
+    half = (t_end - t_start) / 2
+    fd = min(fade_dur, half)
+    fi_end = t_start + fd
+    fo_start = t_end - fd
+    # 淡入段
+    fade_in = f"if(lt(t,{fi_end:.3f}),max(0,(t-{t_start:.3f})/{fd:.3f})"
+    # 淡出段
+    fade_out = f"if(gt(t,{fo_start:.3f}),max(0,({t_end:.3f}-t)/{fd:.3f}),1)"
+    return f"{fade_in},{fade_out})"
+
+
 def render_subtitle(
     ffmpeg: str,
     source_video: Path,
@@ -597,11 +619,14 @@ def render_subtitle(
     dry_run: bool,
     target_resolution: Optional[Tuple[int, int]] = None,
     src_dims: Optional[Tuple[int, int]] = None,
+    subtitle_fade_duration: float = 0.0,
 ) -> None:
     """从源视频直接提取+渲染字幕，单步完成。
 
     使用 input-side seek（-ss 在 -i 之前）配合 re-encode，ffmpeg 的 accurate_seek
     会从关键帧解码但只编码 in_point 之后的帧，彻底避免 copy 模式的 pre-roll 问题。
+
+    subtitle_fade_duration > 0 时，多段字幕（| 分隔）切换时有淡入淡出效果。
     """
     # 支持用 | 分隔多句字幕，每句均分片段时长分段显示
     subtitle_parts = [p.strip() for p in subtitle_text.split("|") if p.strip()]
@@ -626,6 +651,10 @@ def render_subtitle(
         t_start = part_idx * part_dur
         t_end = (part_idx + 1) * part_dur
         enable_expr = f"between(t,{t_start:.3f},{t_end:.3f})"
+
+        use_fade = subtitle_fade_duration > 0 and n_parts > 1
+        if use_fade:
+            alpha_expr = _build_subtitle_alpha_expr(t_start, t_end, subtitle_fade_duration)
 
         wrapped = wrap_text(part_text, max_line_len)
         part_lines = wrapped.split("\n") if wrapped else [""]
@@ -652,6 +681,8 @@ def render_subtitle(
                     f"enable='{enable_expr}'",
                 ]
             )
+            if use_fade:
+                filter_parts.append(f"alpha='{alpha_expr}'")
             drawtext_filters.append("drawtext=" + ":".join(filter_parts))
 
     if target_resolution:
@@ -1000,6 +1031,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--subtitle-fade-duration",
+        type=float,
+        default=0.5,
+        help=(
+            "Fade duration in seconds for subtitle segment transitions (| separated parts). "
+            "Set to 0 to disable. Default: 0.5"
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print ffmpeg commands without executing",
@@ -1216,6 +1256,7 @@ def main() -> int:
                 dry_run=args.dry_run,
                 target_resolution=target_resolution,
                 src_dims=clip_src_dims.get(clip.clip_id),
+                subtitle_fade_duration=args.subtitle_fade_duration,
             )
         else:
             transcode_clip(

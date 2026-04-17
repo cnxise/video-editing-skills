@@ -95,7 +95,7 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 | 编号 | 规则 |
 |------|------|
 | S1 | 每个片段必须有字幕，`voiceover.text` 不可为空 |
-| S2 | 单句 ≤ 16 字（中文），第一人称；每个 clip 应写 **N_SEGS 句**，用 `\|` 分隔（如 6s 写两句 `"今天终于骑上了车\|引擎声代替了闹钟"`，9s 写三句 `"A\|B\|C"`，12s 写四句 `"A\|B\|C\|D"`），每句在对应 3s 时间窗内显示，每句各 ≤ 16 字 |
+| S2 | **硬约束**：字幕必须每 3 秒至少切换一次。设 `N_PARTS = ceil(clip.duration / 3.0)`，则 `voiceover.text` 必须写成 `N_PARTS` 句并使用 `\|` 分隔（如 6s→2 句，9s→3 句，12s→4 句）；**每段必须是独立完整的句子**（能单独成立、有完整含义），绝对禁止将一句话拆成碎片填入各段。每段 ≥ 5 字且 ≤ 16 字（中文）、第一人称。❌ 错误示例：`"一直想知道\|路的尽头\|是什么"`（一句话被劈成3段碎片）✅ 正确示例：`"路越走越远，心越来越静\|不知道终点在哪里\|但每一步都算数"`（3句独立表达）。任一 clip 不满足该格式即判为不合格，必须整版重写 storyboard |
 | S3 | 字幕说**感受和想法**，不描述观众能直接看到的画面内容 |
 | S4 | 所有字幕连续读必须是**有头有尾、有情感弧线的完整叙事**，不是散句 |
 | S5 | **叙事先行**：先写完整字幕文案，再为每句选画面 |
@@ -105,7 +105,7 @@ python "<SKILL_DIR>\scripts\prepare_workspace.py" --video-dir "<VIDEO_DIR>" --us
 写入 `storyboard.json` 后**必须立即执行**：
 
 ```bash
-"<VENV_PYTHON>" "<SKILL_DIR>\scripts\storyboard_guard.py" --storyboard "<WORKSPACE_DIR>\storyboard.json" --output-vlm "<WORKSPACE_DIR>\output_vlm.json" --candidate-clips "<WORKSPACE_DIR>\candidate_clips.json" --mode validate --per-video-max 1 --min-clip-duration 5.0 --min-unique-videos <MIN_VIDEOS>
+"<VENV_PYTHON>" "<SKILL_DIR>\scripts\storyboard_guard.py" --storyboard "<WORKSPACE_DIR>\storyboard.json" --output-vlm "<WORKSPACE_DIR>\output_vlm.json" --candidate-clips "<WORKSPACE_DIR>\candidate_clips.json" --mode validate --per-video-max 1 --min-clip-duration 5.0 --min-unique-videos <MIN_VIDEOS> --subtitle-switch-interval-sec 3.0
 # <MIN_VIDEOS> 使用阶段 2.5 推导的值
 ```
 
@@ -449,6 +449,25 @@ MIN_VIDEOS = max(6, N_CLIPS)                   # 每个视频贡献 1 个 clip
   4) 在满足上面规则后，再做叙事情绪与节奏微调（不得破坏 C1/C3/C4）
 - 即使当前时长已经满足，只要仍可先覆盖更多高优先级不同视频，也**不得过早重复 `source_video`**
 
+#### 3.2.4 字幕-画面二次对齐（必做）
+
+**选片完成后**，逐条对照每个 clip 的 `seg_desc` 与其字幕，执行以下检查：
+
+| 矛盾类型 | 判定标准 | 修复方式 |
+|---------|---------|---------|
+| **动静矛盾** | 字幕描述速度/风/运动感，但 seg_desc 显示人物静止/停车/站立 | 改写字幕为与"静"对应的感受（等待、蓄力、出发前的安静） |
+| **场景矛盾** | 字幕说"一个人"，画面有多人；或反之 | 字幕去掉人称冲突的描述 |
+| **环境矛盾** | 字幕说夜晚/下雨，画面是晴天/白昼 | 字幕改为与实际画面一致的环境感受 |
+| **情绪矛盾** | 字幕轻松愉快，画面是快速激烈的运动镜头 | 允许互补，但方向不可对立（不能用沉重悲伤配轻快画面） |
+
+**自检问题（逐片段回答）：**
+> "如果观众同时看到这段画面和这句字幕，会觉得违和吗？"
+> 若答案是"会"，必须改写字幕，字幕服从画面——画面不可更改，字幕可改。
+
+**改写原则：** 字幕仍须说感受和想法（S3），但感受必须能从该画面中合理生发。
+- ✅ 画面：男人静止站在路边看摩托 → 字幕可写："出发前的那一刻最安静" / "站在这里望着前方，心早已在路上"
+- ❌ 画面：男人静止站在路边看摩托 → 字幕写："两旁的树拼命往后退"（画面没有速度感）
+
 ---
 
 ### 步骤 3.3 整体审视与迭代
@@ -457,10 +476,10 @@ MIN_VIDEOS = max(6, N_CLIPS)                   # 每个视频贡献 1 个 clip
 |------|--------|
 | 叙事连贯 | 相邻字幕情感跳跃是否过大？有断裂则插入过渡 |
 | 画面节奏 | 是否有动静交替？连续单调则调换顺序或替换 |
-| 字幕-画面一致 | 情绪基调方向一致（不要求完全匹配，不可明显矛盾） |
+| 字幕-画面一致 | **无动静矛盾、场景矛盾、环境矛盾**（已在 3.2.4 处理） |
 | 开头/结尾质量 | 这两个位置最重要，不理想优先替换 |
 
-发现问题则回到 3.2.2/3.2.3 调整，通常迭代 1-2 轮即可。
+发现问题则回到 3.2.2/3.2.3/3.2.4 调整，通常迭代 1-2 轮即可。
 
 #### 3.3.1 Guard 失败后的重选与重写
 
@@ -561,7 +580,7 @@ BGM 自动循环、淡入 1s + 淡出 1.5s，与原视频音频 amix 混合（co
 **写入前验证：**
 1. `theme`、`target_duration_seconds` 存在
 2. Clip 约束 **C1–C9** 全部满足
-3. 字幕约束 **S1–S4** 全部满足
+3. 字幕约束 **S1-S4** 全部满足（特别是 S2：`voiceover.text` 必须使用 `|` 分段，且段数 = `ceil(duration/3.0)`）
 4. `transition.type` 是有效值；最后一个片段无 transition
 5. 粗估实际时长与 target 大致匹配（见全局规范时长公式）
 6. BGM `file_path` 是绝对路径且文件存在
